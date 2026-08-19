@@ -1,0 +1,43 @@
+project_id = "awesome-lyrla"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = false
+sql_paths = []
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[storage]
+enabled = true
+file_size_limit = "10MiB"
+
+[auth]
+enabled = false
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["http://127.0.0.1:3000"]
+jwt_expiry = 3600
+enable_signup = false
+
+[analytics]
+enabled = false

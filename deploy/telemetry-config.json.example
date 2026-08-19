@@ -1,0 +1,37 @@
+{
+  "host": "0.0.0.0",
+  "port": 8443,
+  "status_port": 8080,
+  "log_level": "info",
+  "json_log_enable": true,
+  "transmit_decoded_records": true,
+  "vins_signal_tracking_enabled": ["YOUR_VIN"],
+  "rate_limit": {
+    "enabled": true,
+    "message_interval_time": 30,
+    "message_limit": 500
+  },
+  "mqtt": {
+    "broker": "127.0.0.1:1883",
+    "client_id": "awesome-lyrla-telemetry",
+    "username": "awesome-lyrla",
+    "password": "SAME_VALUE_AS_WEB_MQTT_PASSWORD",
+    "topic_base": "awesome-lyrla",
+    "qos": 1,
+    "retained": true,
+    "connect_timeout_ms": 30000,
+    "publish_timeout_ms": 2500
+  },
+  "records": {
+    "V": ["mqtt"],
+    "connectivity": ["mqtt"],
+    "errors": ["mqtt"]
+  },
+  "reliable_ack_sources": {
+    "V": "mqtt"
+  },
+  "tls": {
+    "server_cert": "/secrets/telemetry-server-cert.pem",
+    "server_key": "/secrets/telemetry-server-key.pem"
+  }
+}
