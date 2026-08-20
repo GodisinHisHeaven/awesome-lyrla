@@ -1,0 +1,19 @@
+# Every contribution receives an owner review. The explicit entries below
+# document the highest-risk trust boundaries and remain useful if ownership is
+# later split across maintainer teams.
+* @GodisinHisHeaven
+
+/.github/ @GodisinHisHeaven
+/Dockerfile @GodisinHisHeaven
+/docker/ @GodisinHisHeaven
+/scripts/deploy-production.mjs @GodisinHisHeaven
+/scripts/quality/ @GodisinHisHeaven
+/scripts/check-diff-coverage.mjs @GodisinHisHeaven
+/scripts/run-critical-mutation.mjs @GodisinHisHeaven
+/supabase/migrations/ @GodisinHisHeaven
+/src/server/config.ts @GodisinHisHeaven
+/src/server/crypto.ts @GodisinHisHeaven
+/src/server/lyrics-service.ts @GodisinHisHeaven
+/src/server/player.ts @GodisinHisHeaven
+/src/server/tesla-service.ts @GodisinHisHeaven
+/src/shared/contracts.ts @GodisinHisHeaven

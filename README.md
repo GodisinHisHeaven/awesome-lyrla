@@ -37,6 +37,10 @@ npm run build
 npm run test:e2e
 ```
 
+贡献必须通过独立的静态分析、架构边界、diff coverage、数据库重建、端到端和安全检查。
+设计原则与提交标准见 [架构文档](docs/architecture.md)、
+[系统不变量](docs/invariants/README.md) 和 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## Tesla 接入
 
 1. 在 Tesla Developer Portal 创建应用，将回调地址设为

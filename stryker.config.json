@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts",
+    "related": true
+  },
+  "mutate": [
+    "src/shared/lrc.ts",
+    "src/shared/track.ts",
+    "src/server/apple-lyrics-timeline.ts",
+    "src/server/bounded-lru.ts"
+  ],
+  "reporters": ["clear-text", "progress"],
+  "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
+  "concurrency": 2,
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": "always",
+  "thresholds": {
+    "high": 85,
+    "low": 75,
+    "break": 70
+  }
+}
