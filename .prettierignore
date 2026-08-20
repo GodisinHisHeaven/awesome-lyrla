@@ -1,0 +1,11 @@
+coverage/
+dist/
+dist-server/
+node_modules/
+playwright-report/
+reports/
+test-results/
+package-lock.json
+src/client/styles.css
+supabase/migrations/
+supabase/tests/

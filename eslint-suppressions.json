@@ -1,0 +1,72 @@
+{
+  "src/client/SpatialAmbientBackdrop.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 3
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/client/pages/PlayerPage.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  },
+  "src/client/pages/SetupPage.tsx": {
+    "@typescript-eslint/consistent-type-imports": {
+      "count": 1
+    }
+  },
+  "src/server/apple-lyrics-reprojection.ts": {
+    "@typescript-eslint/consistent-type-imports": {
+      "count": 1
+    }
+  },
+  "src/server/apple-lyrics-timeline-repair.ts": {
+    "@typescript-eslint/consistent-type-imports": {
+      "count": 1
+    }
+  },
+  "src/server/apple-music-lyrics-source.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/server/artwork-palette-service.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prefer-const": {
+      "count": 3
+    },
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "src/server/index.ts": {
+    "prefer-const": {
+      "count": 2
+    }
+  },
+  "src/server/lyrics-service.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 2
+    },
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "src/server/lyrics-service.ts": {
+    "@typescript-eslint/consistent-type-imports": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 3
+    }
+  },
+  "src/server/supabase-apple-lyrics-backfill.ts": {
+    "@typescript-eslint/consistent-type-imports": {
+      "count": 1
+    }
+  }
+}

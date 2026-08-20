@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 -- Run after `supabase db reset` (or after applying every migration to an
 -- isolated PostgreSQL database). All fixture state rolls back.
 begin;

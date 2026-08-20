@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 -- Run after every migration has been applied to an isolated PostgreSQL
 -- database. All fixture state rolls back.
 begin;

@@ -3,6 +3,9 @@ dist/
 dist-server/
 playwright-report/
 test-results/
+coverage/
+reports/
+.stryker-tmp/
 output/playwright/
 .env
 .env.*
