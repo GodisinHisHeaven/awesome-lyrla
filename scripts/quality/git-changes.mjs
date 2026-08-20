@@ -57,9 +57,12 @@ export function changedFiles(base = resolveQualityBase()) {
 
 export function changedLineNumbers(file, base = resolveQualityBase()) {
   if (!base) return new Set();
-  const patch = git(['diff', '--unified=0', '--no-color', '--diff-filter=ACMR', base, '--', file], {
-    allowFailure: true,
-  });
+  const comparisonBase =
+    git(['merge-base', base, 'HEAD'], { allowFailure: true, quiet: true }) || base;
+  const patch = git(
+    ['diff', '--unified=0', '--no-color', '--diff-filter=ACMR', comparisonBase, '--', file],
+    { allowFailure: true },
+  );
   const lines = new Set();
   for (const line of patch.split('\n')) {
     const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
