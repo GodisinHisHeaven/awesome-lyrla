@@ -1,26 +1,28 @@
 # Awesome Lyrla
 
-面向个人自用部署的 Tesla 实时歌词界面。它读取 Fleet Telemetry 的播放状态，优先展示同步歌词，并在车辆导航开启时显示目的地、ETA、剩余里程和预计到达电量。
+**English** | [简体中文](README.zh-CN.md)
 
-## 功能
+A real-time Tesla lyrics interface for personal, self-hosted deployments. It reads playback state from Fleet Telemetry, prioritizes synchronized lyrics, and displays the destination, ETA, remaining distance, and estimated arrival battery when vehicle navigation is active.
 
-- Tesla Fleet Telemetry 实时播放状态
-- LRCLIB 同步歌词与候选版本选择
-- 可选 Supabase 歌词库、Apple TTML 补充和配色缓存
-- 手动 LRC、时间偏移与本地持久化
-- Tesla 浏览器的一次性激活
-- 有上限的内存/磁盘缓存与轻量生产遥测
+## Features
 
-## 运行结构
+- Real-time playback state from Tesla Fleet Telemetry
+- Synchronized lyrics and candidate-version selection from LRCLIB
+- Optional Supabase lyrics library, Apple TTML enrichment, and artwork palette cache
+- Manual LRC input, timing offsets, and local persistence
+- One-time activation for the Tesla browser
+- Bounded memory/disk caches and lightweight production telemetry
 
-- Web：Fastify API、React 页面、SSE 和私有 MQTT broker
-- Tesla：Fleet Telemetry 写入 MQTT，后端聚合当前歌曲和播放时钟
-- 歌词：本地选择 → Supabase（可选）→ LRCLIB；Apple 补充在后台执行
-- 状态：个人设置保存在 `DATA_DIR`，共享歌词可保存在 Supabase
+## Runtime Architecture
 
-## 本地启动
+- Web: Fastify API, React UI, SSE, and a private MQTT broker
+- Tesla: Fleet Telemetry publishes to MQTT; the backend aggregates the current track and playback clock
+- Lyrics: local selection → Supabase (optional) → LRCLIB; Apple enrichment runs in the background
+- State: personal settings are stored in `DATA_DIR`; shared lyrics can be stored in Supabase
 
-需要 Node.js 22。
+## Local Development
+
+Node.js 22 is required.
 
 ```bash
 npm ci
@@ -28,7 +30,7 @@ cp .env.example .env
 npm run dev
 ```
 
-默认是演示模式，打开 <http://localhost:5173> 即可预览。常用检查：
+Demo mode is enabled by default. Open <http://localhost:5173> to preview the application. Common checks:
 
 ```bash
 npm run typecheck
@@ -37,78 +39,73 @@ npm run build
 npm run test:e2e
 ```
 
-贡献必须通过独立的静态分析、架构边界、diff coverage、数据库重建、端到端和安全检查。
-设计原则与提交标准见 [架构文档](docs/architecture.md)、
-[系统不变量](docs/invariants/README.md) 和 [CONTRIBUTING.md](CONTRIBUTING.md)。
+Contributions must pass independent static-analysis, architecture-boundary, diff-coverage, database-rebuild, end-to-end, and security checks. See the [architecture documentation](docs/architecture.md), [system invariants](docs/invariants/README.md), and [CONTRIBUTING.md](CONTRIBUTING.md) for design principles and contribution requirements.
 
-## Tesla 接入
+## Tesla Integration
 
-1. 在 Tesla Developer Portal 创建应用，将回调地址设为
-   `https://YOUR_DOMAIN/api/tesla/oauth/callback`。
-2. 生成 Tesla virtual key：
+1. Create an application in the Tesla Developer Portal and set its callback URL to `https://YOUR_DOMAIN/api/tesla/oauth/callback`.
+2. Generate a Tesla virtual key:
 
    ```bash
    npm run tesla:keygen
    ```
 
-3. 生成 Fleet Telemetry 证书：
+3. Generate Fleet Telemetry certificates:
 
    ```bash
    npm run tesla:certgen -- YOUR_DOMAIN
    ```
 
-4. 复制 `deploy/telemetry-config.json.example`，填写 VIN 和与
-   `MQTT_PASSWORD` 相同的密码。
-5. 设置 `TESLA_CLIENT_ID`、`TESLA_CLIENT_SECRET`、`TELEMETRY_HOST`
-   和密钥文件，然后以 `DEMO_MODE=false` 启动。
-6. 打开 `/setup`，用管理员 PIN 完成 Tesla OAuth、选择车辆、配对虚拟钥匙并启用遥测。
-7. 在 Tesla 浏览器打开同一个 `/setup`，输入 PIN 后点击“激活此车机并打开歌词”。
+4. Copy `deploy/telemetry-config.json.example`, then provide the VIN and the same password used by `MQTT_PASSWORD`.
+5. Set `TESLA_CLIENT_ID`, `TESLA_CLIENT_SECRET`, `TELEMETRY_HOST`, and the key-file paths, then start the application with `DEMO_MODE=false`.
+6. Open `/setup`, enter the administrator PIN, complete Tesla OAuth, select a vehicle, pair the virtual key, and enable telemetry.
+7. Open the same `/setup` page in the Tesla browser, enter the PIN, then select “Activate this vehicle browser and open lyrics.”
 
-服务不会发送驾驶控制命令。Tesla token、管理员会话和播放器激活 cookie 只由后端处理。
+The service does not send driving-control commands. Tesla tokens, administrator sessions, and player activation cookies are handled only by the backend.
 
-## Fly.io 部署
+## Fly.io Deployment
 
-仓库提供一个单应用模板；Web、Fleet Telemetry 和 vehicle-command proxy 运行在同一台个人实例中。
+The repository provides a single-application template. The web service, Fleet Telemetry, and vehicle-command proxy run on the same personal instance.
 
 ```bash
 cp fly.toml.example fly.toml
-# 修改 app、APP_ORIGIN、TELEMETRY_HOST、region 和 volume 名称
+# Update the app, APP_ORIGIN, TELEMETRY_HOST, region, and volume name
 flyctl apps create YOUR_APP
 flyctl volumes create awesome_lyrla_data --region ord
 ```
 
-至少设置这些 secrets：
+At minimum, configure these secrets:
 
 ```bash
 flyctl secrets set \
-  SESSION_SECRET='至少32位随机值' \
-  ADMIN_PIN='至少6位' \
-  MQTT_PASSWORD='随机密码' \
+  SESSION_SECRET='at-least-32-random-characters' \
+  ADMIN_PIN='at-least-6-characters' \
+  MQTT_PASSWORD='random-password' \
   TESLA_CLIENT_ID='...' \
   TESLA_CLIENT_SECRET='...'
 ```
 
-`fly.toml.example` 中的 `[[files]]` 还需要对应的 PEM、telemetry JSON 和代理证书 secrets。所有本地密钥目录与 `fly.toml` 都已忽略，不能提交。
+The `[[files]]` entries in `fly.toml.example` also require matching secrets for the PEM files, telemetry JSON, and proxy certificate. All local key directories and `fly.toml` are ignored and must never be committed.
 
-生产发布只能从与 `origin/main` 完全一致的干净 `main` 执行：
+Production releases may run only from a clean `main` that exactly matches `origin/main`:
 
 ```bash
 npm run release:check
 npm run deploy:production
 ```
 
-脚本会执行锁定依赖安装、类型检查、单元测试、生产构建、migration 文件检查和 Fly 配置校验，再把当前 Git SHA 写入镜像。
+The scripts perform a locked dependency installation, type checking, unit tests, a production build, migration-file checks, and Fly configuration validation before embedding the current Git SHA in the image.
 
-## 可选 Supabase 歌词库
+## Optional Supabase Lyrics Library
 
-不配置 Supabase 时，应用直接使用 LRCLIB 和本地缓存。要启用自己的歌词库：
+Without Supabase configuration, the application uses LRCLIB and its local cache directly. To enable your own lyrics library:
 
 ```bash
 supabase link --project-ref YOUR_PROJECT_REF
 supabase db push
 ```
 
-然后设置：
+Then set:
 
 ```dotenv
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
@@ -118,11 +115,11 @@ SUPABASE_LYRICS_MODE=primary
 SUPABASE_PALETTE_MODE=primary
 ```
 
-`SUPABASE_SECRET_KEY` 只能存在于服务端。这个项目不使用 Supabase Auth；migration 只包含歌词、Apple TTML、队列和配色结构。
+`SUPABASE_SECRET_KEY` must remain server-side. This project does not use Supabase Auth; its migrations contain only lyrics, Apple TTML, queue, and artwork-palette structures.
 
-## 可选 Apple 歌词补充
+## Optional Apple Lyrics Enrichment
 
-Apple 补充需要 Supabase、Apple Music developer credentials 和 media user token。个人低流量部署可以保留模板中的 embedded runner；默认关闭：
+Apple enrichment requires Supabase, Apple Music developer credentials, and a media user token. Personal, low-traffic deployments can retain the template's embedded runner, which is disabled by default:
 
 ```dotenv
 APPLE_LYRICS_BACKFILL_ENABLED=true
@@ -132,11 +129,11 @@ APPLE_MUSIC_KEY_ID=...
 APPLE_MUSIC_PRIVATE_KEY_PATH=./secrets/apple-music-private-key.p8
 ```
 
-后台会保存原始 TTML，并投影成当前行级时间轴。播放器仍会在 Apple 不可用时回退到 Supabase 中的 LRCLIB 版本或直接查询 LRCLIB。
+The background process stores raw TTML and projects it into the current line-level timeline. If Apple is unavailable, the player still falls back to the LRCLIB version stored in Supabase or queries LRCLIB directly.
 
-## 个人数据与备份
+## Personal Data and Backups
 
-- `DATA_DIR` 包含 Tesla token、选中车辆、歌词偏移、手动歌词和缓存。
-- Fly 部署应使用持久 volume，并定期备份。
-- Supabase schema 只通过新增 migration 修改。
-- 不要提交 `.env`、`fly.toml`、PEM、token 或 telemetry 配置。
+- `DATA_DIR` contains Tesla tokens, the selected vehicle, lyrics offsets, manual lyrics, and caches.
+- Fly deployments should use a persistent volume and regular backups.
+- The Supabase schema must change only through additive migrations.
+- Never commit `.env`, `fly.toml`, PEM files, tokens, or telemetry configuration.
