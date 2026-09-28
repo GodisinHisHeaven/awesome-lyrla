@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppleLyricsBackfillProcessResult,
   AppleLyricsBackfillWorker,
@@ -32,9 +25,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 function workerWith(
-  runOnce: (
-    options: { signal?: AbortSignal },
-  ) => Promise<AppleLyricsBackfillProcessResult[]>,
+  runOnce: (options: { signal?: AbortSignal }) => Promise<AppleLyricsBackfillProcessResult[]>,
 ): AppleLyricsBackfillWorker<unknown> {
   return { runOnce } as unknown as AppleLyricsBackfillWorker<unknown>;
 }
@@ -52,9 +43,8 @@ describe('AppleLyricsBackfillRunner', () => {
   it('polls immediately after start and never overlaps polls', async () => {
     const firstPoll = deferred<AppleLyricsBackfillProcessResult[]>();
     const runOnce = vi.fn(
-      (
-        _options: { signal?: AbortSignal },
-      ): Promise<AppleLyricsBackfillProcessResult[]> => Promise.resolve([]),
+      (_options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> =>
+        Promise.resolve([]),
     );
     runOnce.mockImplementationOnce(() => firstPoll.promise);
     const runner = new AppleLyricsBackfillRunner(workerWith(runOnce), 1_000);
@@ -74,11 +64,13 @@ describe('AppleLyricsBackfillRunner', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(runOnce).toHaveBeenCalledTimes(1);
 
-    firstPoll.resolve([{
-      state: 'succeeded',
-      jobId: 'job-1',
-      artifactSha256: 'a'.repeat(64),
-    }]);
+    firstPoll.resolve([
+      {
+        state: 'succeeded',
+        jobId: 'job-1',
+        artifactSha256: 'a'.repeat(64),
+      },
+    ]);
     await vi.advanceTimersByTimeAsync(0);
     expect(runner.stats()).toMatchObject({
       running: false,
@@ -106,10 +98,14 @@ describe('AppleLyricsBackfillRunner', () => {
       (options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> => {
         workerSignal = options.signal;
         return new Promise((resolve) => {
-          options.signal?.addEventListener('abort', () => {
-            abortObserved.resolve();
-            void cleanupAllowed.promise.then(() => resolve([]));
-          }, { once: true });
+          options.signal?.addEventListener(
+            'abort',
+            () => {
+              abortObserved.resolve();
+              void cleanupAllowed.promise.then(() => resolve([]));
+            },
+            { once: true },
+          );
         });
       },
     );
@@ -177,9 +173,7 @@ describe('AppleLyricsBackfillRunner', () => {
     error.name = 'FetchError';
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const runOnce = vi.fn(
-      async (
-        _options: { signal?: AbortSignal },
-      ): Promise<AppleLyricsBackfillProcessResult[]> => {
+      async (_options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> => {
         throw error;
       },
     );
@@ -210,10 +204,7 @@ describe('AppleLyricsBackfillRunner', () => {
     });
     expect(JSON.stringify(runner.stats())).not.toContain(secret);
     expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
-    expect(warn).toHaveBeenCalledWith(
-      'Apple lyrics backfill poll failed:',
-      'FetchError',
-    );
+    expect(warn).toHaveBeenCalledWith('Apple lyrics backfill poll failed:', 'FetchError');
 
     await runner.close();
   });
@@ -221,17 +212,17 @@ describe('AppleLyricsBackfillRunner', () => {
   it('distinguishes empty polling liveness from a real successful job', async () => {
     vi.setSystemTime(new Date('2026-07-19T12:00:00.000Z'));
     const runOnce = vi.fn(
-      async (
-        _options: { signal?: AbortSignal },
-      ): Promise<AppleLyricsBackfillProcessResult[]> => [],
+      async (_options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> => [],
     );
     runOnce
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{
-        state: 'succeeded',
-        jobId: 'job-1',
-        artifactSha256: 'a'.repeat(64),
-      }])
+      .mockResolvedValueOnce([
+        {
+          state: 'succeeded',
+          jobId: 'job-1',
+          artifactSha256: 'a'.repeat(64),
+        },
+      ])
       .mockResolvedValueOnce([]);
     const runner = new AppleLyricsBackfillRunner(workerWith(runOnce), 1_000);
 
@@ -276,9 +267,7 @@ describe('AppleLyricsBackfillRunner', () => {
 
   it('resets consecutive poll failures after a successful recovery', async () => {
     const runOnce = vi.fn(
-      async (
-        _options: { signal?: AbortSignal },
-      ): Promise<AppleLyricsBackfillProcessResult[]> => [],
+      async (_options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> => [],
     );
     runOnce.mockRejectedValueOnce(new Error('temporary Supabase failure'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -309,22 +298,29 @@ describe('AppleLyricsBackfillRunner', () => {
 
   it('backs off empty specialized queues without slowing active draining', async () => {
     const runOnce = vi.fn(
-      async (
-        _options: { signal?: AbortSignal },
-      ): Promise<AppleLyricsBackfillProcessResult[]> => [],
+      async (_options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> => [],
     );
     runOnce
-      .mockResolvedValueOnce([{
-        state: 'succeeded',
-        jobId: 'job-1',
-        artifactSha256: 'a'.repeat(64),
-      }])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([
+        {
+          state: 'succeeded',
+          jobId: 'job-1',
+          artifactSha256: 'a'.repeat(64),
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          state: 'succeeded',
+          jobId: 'job-2',
+          artifactSha256: 'b'.repeat(64),
+        },
+      ]);
     const runner = new AppleLyricsBackfillRunner(
       workerWith(runOnce),
       1_000,
       'reprojection',
-      300_000,
+      120_000,
     );
 
     runner.start();
@@ -333,12 +329,20 @@ describe('AppleLyricsBackfillRunner', () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(runOnce).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(299_999);
+    await vi.advanceTimersByTimeAsync(119_999);
     expect(runOnce).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(runOnce).toHaveBeenCalledTimes(3);
 
+    // Work arriving during an idle interval resumes the normal drain cadence.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(runOnce).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runOnce).toHaveBeenCalledTimes(4);
+
     await runner.close();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(runOnce).toHaveBeenCalledTimes(4);
   });
 
   it('serializes different runners through one FIFO coordinator', async () => {
@@ -364,13 +368,9 @@ describe('AppleLyricsBackfillRunner', () => {
       active -= 1;
       return [];
     });
-    const firstRunner = new AppleLyricsBackfillRunner(
-      workerWith(firstRun),
-      1_000,
-      'first',
-      1_000,
-      { coordinator },
-    );
+    const firstRunner = new AppleLyricsBackfillRunner(workerWith(firstRun), 1_000, 'first', 1_000, {
+      coordinator,
+    });
     const secondRunner = new AppleLyricsBackfillRunner(
       workerWith(secondRun),
       1_000,
@@ -404,8 +404,9 @@ describe('AppleLyricsBackfillRunner', () => {
 
     await expect(result).rejects.toMatchObject({ name: 'AbortError' });
     expect(operation).not.toHaveBeenCalled();
-    await expect(coordinator.runExclusive(undefined, async () => ['released']))
-      .resolves.toEqual(['released']);
+    await expect(coordinator.runExclusive(undefined, async () => ['released'])).resolves.toEqual([
+      'released',
+    ]);
   });
 
   it('lets a queued runner close without waiting for the active coordinator owner', async () => {
@@ -413,13 +414,9 @@ describe('AppleLyricsBackfillRunner', () => {
     const firstPoll = deferred<AppleLyricsBackfillProcessResult[]>();
     const firstRun = vi.fn(() => firstPoll.promise);
     const secondRun = vi.fn(async () => []);
-    const firstRunner = new AppleLyricsBackfillRunner(
-      workerWith(firstRun),
-      1_000,
-      'first',
-      1_000,
-      { coordinator },
-    );
+    const firstRunner = new AppleLyricsBackfillRunner(workerWith(firstRun), 1_000, 'first', 1_000, {
+      coordinator,
+    });
     const secondRunner = new AppleLyricsBackfillRunner(
       workerWith(secondRun),
       1_000,
@@ -443,20 +440,28 @@ describe('AppleLyricsBackfillRunner', () => {
     const runOnce = vi.fn(
       (options: { signal?: AbortSignal }): Promise<AppleLyricsBackfillProcessResult[]> =>
         new Promise((resolve) => {
-          options.signal?.addEventListener('abort', () => {
-            void cleanup.promise.then(() => resolve([{
-              state: 'retry-scheduled',
-              jobId: 'job-timeout',
-              attempts: 1,
-              availableAtMs: Date.now() + 1_000,
-              failure: {
-                stage: 'fetch',
-                code: 'timeout',
-                retryable: true,
-                exhausted: false,
-              },
-            }]));
-          }, { once: true });
+          options.signal?.addEventListener(
+            'abort',
+            () => {
+              void cleanup.promise.then(() =>
+                resolve([
+                  {
+                    state: 'retry-scheduled',
+                    jobId: 'job-timeout',
+                    attempts: 1,
+                    availableAtMs: Date.now() + 1_000,
+                    failure: {
+                      stage: 'fetch',
+                      code: 'timeout',
+                      retryable: true,
+                      exhausted: false,
+                    },
+                  },
+                ]),
+              );
+            },
+            { once: true },
+          );
         }),
     );
     const runner = new AppleLyricsBackfillRunner(
@@ -548,12 +553,7 @@ describe('AppleLyricsBackfillRunner', () => {
       throw new Error('dependency unavailable');
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const runner = new AppleLyricsBackfillRunner(
-      workerWith(runOnce),
-      1_000,
-      'reprojection',
-      8_000,
-    );
+    const runner = new AppleLyricsBackfillRunner(workerWith(runOnce), 1_000, 'reprojection', 8_000);
 
     runner.start();
     await vi.advanceTimersByTimeAsync(0);

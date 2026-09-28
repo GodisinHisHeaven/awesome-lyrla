@@ -27,12 +27,7 @@ const COMPLETE_TRACK: TrackMetadata = {
   durationMs: 214_000,
   source: 'Apple Music',
 };
-const APPLE_BACKFILL_TEST_FIELDS = [
-  'title',
-  'artist',
-  'album',
-  'durationMs',
-] as const;
+const APPLE_BACKFILL_TEST_FIELDS = ['title', 'artist', 'album', 'durationMs'] as const;
 type AppleBackfillTestField = (typeof APPLE_BACKFILL_TEST_FIELDS)[number];
 
 const TELEMETRY_FIELD_BY_TRACK_FIELD: Record<AppleBackfillTestField, string> = {
@@ -45,8 +40,10 @@ const TELEMETRY_FIELD_BY_TRACK_FIELD: Record<AppleBackfillTestField, string> = {
 function fieldPermutations<T>(values: readonly T[]): T[][] {
   if (values.length <= 1) return [[...values]];
   return values.flatMap((value, index) =>
-    fieldPermutations(values.filter((_, candidateIndex) => candidateIndex !== index))
-      .map((remaining) => [value, ...remaining]));
+    fieldPermutations(values.filter((_, candidateIndex) => candidateIndex !== index)).map(
+      (remaining) => [value, ...remaining],
+    ),
+  );
 }
 
 function ingestBackfillTrackField(
@@ -78,10 +75,7 @@ function testStore(): JsonStore {
 }
 
 function lyricsService(
-  find: (
-    track: TrackMetadata,
-    options?: { bypassLocalCache?: boolean },
-  ) => Promise<LyricsPayload>,
+  find: (track: TrackMetadata, options?: { bypassLocalCache?: boolean }) => Promise<LyricsPayload>,
   observePlayback: (track: TrackMetadata) => void = vi.fn(),
 ): LyricsService {
   return {
@@ -150,19 +144,23 @@ describe('PlayerCoordinator lyric resolution', () => {
     player.ingest(VIN, 'MilesToArrival', { doubleValue: 12.4 });
     player.ingest(VIN, 'ExpectedEnergyPercentAtTripArrival', { intValue: 68 });
 
-    expect(player.snapshot().navigation).toEqual(expect.objectContaining({
-      destinationName: '虹桥国际机场',
-      minutesToArrival: 18.2,
-      distanceToArrivalMiles: 12.4,
-      arrivalBatteryPercent: 68,
-    }));
+    expect(player.snapshot().navigation).toEqual(
+      expect.objectContaining({
+        destinationName: '虹桥国际机场',
+        minutesToArrival: 18.2,
+        distanceToArrivalMiles: 12.4,
+        arrivalBatteryPercent: 68,
+      }),
+    );
 
     player.ingest(VIN, 'MilesToArrival', { value: { invalid: true } });
-    expect(player.snapshot().navigation).toEqual(expect.objectContaining({
-      destinationName: '虹桥国际机场',
-      minutesToArrival: 18.2,
-      arrivalBatteryPercent: 68,
-    }));
+    expect(player.snapshot().navigation).toEqual(
+      expect.objectContaining({
+        destinationName: '虹桥国际机场',
+        minutesToArrival: 18.2,
+        arrivalBatteryPercent: 68,
+      }),
+    );
     expect(player.snapshot().navigation).not.toHaveProperty('distanceToArrivalMiles');
 
     player.ingest(VIN, 'ExpectedEnergyPercentAtTripArrival', { value: { invalid: true } });
@@ -171,6 +169,40 @@ describe('PlayerCoordinator lyric resolution', () => {
       minutesToArrival: 18.2,
       updatedAtMs: expect.any(Number),
     });
+  });
+
+  it('keeps stationary navigation visible with 30s numeric and 60s destination resends', async () => {
+    const player = new PlayerCoordinator(
+      lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
+      artworkPaletteService(),
+      testStore(),
+    );
+    try {
+      for (let seconds = 0; seconds <= 180; seconds += 30) {
+        if (seconds > 0) {
+          await vi.advanceTimersByTimeAsync(30_000);
+          expect(player.snapshot().navigation).not.toBeNull();
+        }
+        if (seconds % 60 === 0) player.ingest(VIN, 'DestinationName', 'Airport');
+        player.ingest(VIN, 'MinutesToArrival', 18.2);
+        player.ingest(VIN, 'MilesToArrival', 12.4);
+        player.ingest(VIN, 'ExpectedEnergyPercentAtTripArrival', 68);
+        expect(player.snapshot().navigation).toMatchObject({
+          destinationName: 'Airport',
+          minutesToArrival: 18.2,
+          distanceToArrivalMiles: 12.4,
+          arrivalBatteryPercent: 68,
+        });
+      }
+      // A changed value can arrive between resends; cancellation must still clear immediately.
+      await vi.advanceTimersByTimeAsync(15_000);
+      player.ingest(VIN, 'MinutesToArrival', 17.7);
+      expect(player.snapshot().navigation?.minutesToArrival).toBe(17.7);
+      player.ingest(VIN, 'DestinationName', { value: { invalid: true } });
+      expect(player.snapshot().navigation).toBeNull();
+    } finally {
+      player.dispose();
+    }
   });
 
   it('does not keep an old arrival-energy estimate after the route telemetry is refreshed', async () => {
@@ -188,10 +220,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     player.ingest(VIN, 'MinutesToArrival', 17.1);
     await vi.advanceTimersByTimeAsync(11_000);
 
-    expect(player.snapshot().navigation).toEqual(expect.objectContaining({
-      destinationName: '虹桥国际机场',
-      minutesToArrival: 17.1,
-    }));
+    expect(player.snapshot().navigation).toEqual(
+      expect.objectContaining({
+        destinationName: '虹桥国际机场',
+        minutesToArrival: 17.1,
+      }),
+    );
     expect(player.snapshot().navigation).not.toHaveProperty('arrivalBatteryPercent');
   });
 
@@ -211,10 +245,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().navigation).toBeNull();
 
     player.ingest(VIN, 'MinutesToArrival', 24);
-    expect(player.snapshot().navigation).toEqual(expect.objectContaining({
-      destinationName: '新目的地',
-      minutesToArrival: 24,
-    }));
+    expect(player.snapshot().navigation).toEqual(
+      expect.objectContaining({
+        destinationName: '新目的地',
+        minutesToArrival: 24,
+      }),
+    );
     expect(player.snapshot().navigation).not.toHaveProperty('arrivalBatteryPercent');
     expect(player.snapshot().navigation).not.toHaveProperty('distanceToArrivalMiles');
 
@@ -235,12 +271,14 @@ describe('PlayerCoordinator lyric resolution', () => {
     player.ingest(VIN, 'MediaNowPlayingDuration', { longValue: 214_000 });
     await vi.advanceTimersByTimeAsync(700);
 
-    expect(find).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Midnight Circuit',
-      artist: '',
-      album: 'After Dark',
-      durationMs: 214_000,
-    }));
+    expect(find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Midnight Circuit',
+        artist: '',
+        album: 'After Dark',
+        durationMs: 214_000,
+      }),
+    );
     expect(player.snapshot().lyrics.kind).toBe('synced');
   });
 
@@ -357,10 +395,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().elapsedMs).toBe(frozenElapsedMs);
 
     player.ingest(VIN, 'MediaNowPlayingElapsed', 700);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 700,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 700,
+      }),
+    );
   });
 
   it('keeps a confirmed clock ready when an empty album is enriched', async () => {
@@ -390,10 +430,9 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(enriched.playbackClockReady).toBe(true);
     await vi.advanceTimersByTimeAsync(1_250);
     expect(find).toHaveBeenCalledTimes(2);
-    expect(find).toHaveBeenLastCalledWith(
-      expect.objectContaining({ album: 'Album A' }),
-      { bypassLocalCache: true },
-    );
+    expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ album: 'Album A' }), {
+      bypassLocalCache: true,
+    });
     expect(player.snapshot().lyricsGeneration).toBe(player.snapshot().trackGeneration);
 
     const enrichedGeneration = player.snapshot().trackGeneration;
@@ -437,10 +476,12 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
     player.ingest(VIN, 'MediaNowPlayingElapsed', 102_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 102_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 102_000,
+      }),
+    );
   });
 
   it('does not attribute a confirmed B trajectory to a rapid C switch', async () => {
@@ -478,10 +519,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().playbackClockReady).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
     player.ingest(VIN, 'MediaNowPlayingElapsed', 4_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 4_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 4_000,
+      }),
+    );
   });
 
   it('does not mistake a clock accepted mid-burst for the previous track clock', async () => {
@@ -528,10 +571,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().playbackClockReady).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
     player.ingest(VIN, 'MediaNowPlayingElapsed', 6_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 6_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 6_000,
+      }),
+    );
   });
 
   it('retains both A and mid-burst B trajectories until late metadata settles', async () => {
@@ -569,10 +614,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().playbackClockReady).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
     player.ingest(VIN, 'MediaNowPlayingElapsed', 4_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 4_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 4_000,
+      }),
+    );
   });
 
   it('rejects a delayed A sample that arrives after B has already reset the clock', async () => {
@@ -599,17 +646,21 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().playbackClockReady).toBe(true);
 
     player.ingest(VIN, 'MediaNowPlayingElapsed', 83_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 0,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 0,
+      }),
+    );
 
     await vi.advanceTimersByTimeAsync(1_000);
     player.ingest(VIN, 'MediaNowPlayingElapsed', 1_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 1_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 1_000,
+      }),
+    );
   });
 
   it('accepts a resumed high-position B clock only after two continuous samples', async () => {
@@ -637,10 +688,12 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
     player.ingest(VIN, 'MediaNowPlayingElapsed', 43_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 43_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 43_000,
+      }),
+    );
   });
 
   it('uses even a single prior sample to reject delayed A evidence during the grace period', async () => {
@@ -672,10 +725,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().playbackClockReady).toBe(true);
 
     player.ingest(VIN, 'MediaNowPlayingElapsed', 85_500);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 1_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 1_000,
+      }),
+    );
   });
 
   it('lets an ambiguous resumed trajectory take over after grace plus two samples', async () => {
@@ -702,10 +757,12 @@ describe('PlayerCoordinator lyric resolution', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       player.ingest(VIN, 'MediaNowPlayingElapsed', 84_000 + second * 1_000);
     }
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 88_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 88_000,
+      }),
+    );
   });
 
   it('requires two continuous samples before a large post-grace jump replaces a ready clock', async () => {
@@ -759,10 +816,12 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(player.snapshot().playbackClockReady).toBe(true);
 
     player.ingest(VIN, 'MediaNowPlayingElapsed', 50_000);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      playbackClockReady: true,
-      elapsedMs: 50_000,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        playbackClockReady: true,
+        elapsedMs: 50_000,
+      }),
+    );
   });
 
   it('invalidates a confirmed clock when a nonempty album is cleared before replacement', () => {
@@ -806,8 +865,7 @@ describe('PlayerCoordinator lyric resolution', () => {
     unsubscribe();
 
     expect(revisions).toHaveLength(2);
-    expect(revisions.slice(1).every((revision, index) =>
-      revision > revisions[index])).toBe(true);
+    expect(revisions.slice(1).every((revision, index) => revision > revisions[index])).toBe(true);
     expect(player.snapshot().snapshotRevision).toBe(revisions.at(-1));
   });
 
@@ -834,7 +892,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('does not query or publish an intermediate title-only metadata epoch', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'a', startMs: 0, text: 'Track A' }],
@@ -863,101 +922,92 @@ describe('PlayerCoordinator lyric resolution', () => {
     await vi.advanceTimersByTimeAsync(1_249);
     expect(find).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      trackGeneration: generationC,
-      lyricsGeneration: generationC,
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        trackGeneration: generationC,
+        lyricsGeneration: generationC,
+      }),
+    );
     expect(find).toHaveBeenCalledTimes(2);
-    expect(find.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-      title: 'Track C',
-      artist: '',
-      album: '',
-      durationMs: 0,
-    }));
+    expect(find.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        title: 'Track C',
+        artist: '',
+        album: '',
+        durationMs: 0,
+      }),
+    );
     expect(player.snapshot().lyrics.lines[0]?.text).toBe('Track C');
   });
 
-  it.each(fieldPermutations(APPLE_BACKFILL_TEST_FIELDS).map((order) => [
-    order.join(' → '),
-    order,
-  ] as const))(
-    'publishes one lyrics version when replacement fields arrive as %s',
-    async (_label, order) => {
-      const trackA: TrackMetadata = {
-        title: 'Track A',
-        artist: 'Artist A',
-        album: 'Album A',
-        durationMs: 180_000,
-        source: '',
-      };
-      const trackB: TrackMetadata = {
-        title: 'Track B',
-        artist: 'Artist B',
-        album: 'Album B',
-        durationMs: 200_000,
-        source: '',
-      };
-      const find = vi.fn(async (track: TrackMetadata): Promise<LyricsPayload> => ({
-        kind: 'synced',
-        lines: [{
+  it.each(
+    fieldPermutations(APPLE_BACKFILL_TEST_FIELDS).map(
+      (order) => [order.join(' → '), order] as const,
+    ),
+  )('publishes one lyrics version when replacement fields arrive as %s', async (_label, order) => {
+    const trackA: TrackMetadata = {
+      title: 'Track A',
+      artist: 'Artist A',
+      album: 'Album A',
+      durationMs: 180_000,
+      source: '',
+    };
+    const trackB: TrackMetadata = {
+      title: 'Track B',
+      artist: 'Artist B',
+      album: 'Album B',
+      durationMs: 200_000,
+      source: '',
+    };
+    const find = vi.fn(async (track: TrackMetadata): Promise<LyricsPayload> => ({
+      kind: 'synced',
+      lines: [
+        {
           id: track.title,
           startMs: 0,
           text: `${track.title}|${track.artist}|${track.album}|${track.durationMs}`,
-        }],
-        provider: 'apple',
-      }));
-      const player = new PlayerCoordinator(
-        lyricsService(find),
-        artworkPaletteService(),
-        testStore(),
-      );
+        },
+      ],
+      provider: 'apple',
+    }));
+    const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
 
-      ingestBackfillTrack(player, trackA);
-      await vi.advanceTimersByTimeAsync(LYRICS_METADATA_DEBOUNCE_MS);
-      expect(find).toHaveBeenCalledTimes(1);
+    ingestBackfillTrack(player, trackA);
+    await vi.advanceTimersByTimeAsync(LYRICS_METADATA_DEBOUNCE_MS);
+    expect(find).toHaveBeenCalledTimes(1);
 
-      for (const [index, field] of order.entries()) {
-        ingestBackfillTrackField(player, trackB, field);
-        if (index < order.length - 1) {
-          await vi.advanceTimersByTimeAsync(
-            LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS - 250,
-          );
-          expect(find).toHaveBeenCalledTimes(1);
-          expect(player.snapshot().lyrics.lines[0]?.text).toContain('Track A|');
-        }
+    for (const [index, field] of order.entries()) {
+      ingestBackfillTrackField(player, trackB, field);
+      if (index < order.length - 1) {
+        await vi.advanceTimersByTimeAsync(LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS - 250);
+        expect(find).toHaveBeenCalledTimes(1);
+        expect(player.snapshot().lyrics.lines[0]?.text).toContain('Track A|');
       }
+    }
 
-      await vi.advanceTimersByTimeAsync(
-        LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS - 1,
-      );
-      expect(find).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS - 1);
+    expect(find).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
 
-      expect(find).toHaveBeenCalledTimes(2);
-      expect(find.mock.calls[1]?.[0]).toEqual(trackB);
-      expect(player.snapshot().lyrics.lines[0]?.text).toBe(
-        'Track B|Artist B|Album B|200000',
-      );
-    },
-  );
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(find.mock.calls[1]?.[0]).toEqual(trackB);
+    expect(player.snapshot().lyrics.lines[0]?.text).toBe('Track B|Artist B|Album B|200000');
+  });
 
   it('marks previous lyrics stale for the full duration of a replacement lookup', async () => {
     let finishReplacement: ((lyrics: LyricsPayload) => void) | undefined;
     const replacement = new Promise<LyricsPayload>((resolve) => {
       finishReplacement = resolve;
     });
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'a', startMs: 0, text: 'Track A timeline' }],
         provider: 'apple',
       } satisfies LyricsPayload)
       .mockReturnValueOnce(replacement);
-    const player = new PlayerCoordinator(
-      lyricsService(find),
-      artworkPaletteService(),
-      testStore(),
-    );
+    const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
 
     ingestBackfillTrack(player, {
       title: 'Track A',
@@ -976,19 +1026,23 @@ describe('PlayerCoordinator lyric resolution', () => {
       durationMs: 200_000,
       source: '',
     });
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      lyricsTrackMatchesCurrent: false,
-      lyrics: expect.objectContaining({
-        kind: 'synced',
-        lines: [expect.objectContaining({ text: 'Track A timeline' })],
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        lyricsTrackMatchesCurrent: false,
+        lyrics: expect.objectContaining({
+          kind: 'synced',
+          lines: [expect.objectContaining({ text: 'Track A timeline' })],
+        }),
       }),
-    }));
+    );
 
     await vi.advanceTimersByTimeAsync(LYRICS_METADATA_DEBOUNCE_MS);
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      lyricsTrackMatchesCurrent: false,
-      lyrics: expect.objectContaining({ kind: 'loading' }),
-    }));
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        lyricsTrackMatchesCurrent: false,
+        lyrics: expect.objectContaining({ kind: 'loading' }),
+      }),
+    );
 
     await vi.advanceTimersByTimeAsync(18_000);
     expect(player.snapshot().lyricsTrackMatchesCurrent).toBe(false);
@@ -999,13 +1053,15 @@ describe('PlayerCoordinator lyric resolution', () => {
       provider: 'apple',
     });
     await Promise.resolve();
-    expect(player.snapshot()).toEqual(expect.objectContaining({
-      lyricsTrackMatchesCurrent: true,
-      lyrics: expect.objectContaining({
-        kind: 'synced',
-        lines: [expect.objectContaining({ text: 'Track B timeline' })],
+    expect(player.snapshot()).toEqual(
+      expect.objectContaining({
+        lyricsTrackMatchesCurrent: true,
+        lyrics: expect.objectContaining({
+          kind: 'synced',
+          lines: [expect.objectContaining({ text: 'Track B timeline' })],
+        }),
       }),
-    }));
+    );
   });
 
   it('replaces an early next-track artist with the later title epoch artist', async () => {
@@ -1035,11 +1091,7 @@ describe('PlayerCoordinator lyric resolution', () => {
       lines: [{ id: track.title, startMs: 0, text: track.title }],
       provider: 'apple',
     }));
-    const player = new PlayerCoordinator(
-      lyricsService(find),
-      artworkPaletteService(),
-      testStore(),
-    );
+    const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
 
     ingestBackfillTrack(player, trackA);
     await vi.advanceTimersByTimeAsync(LYRICS_METADATA_DEBOUNCE_MS);
@@ -1061,7 +1113,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('pins a title-only version when the remaining metadata arrives late', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'a', startMs: 0, text: 'Track A timeline' }],
@@ -1077,11 +1130,7 @@ describe('PlayerCoordinator lyric resolution', () => {
         lines: [{ id: 'b-exact', startMs: 200, text: 'Track B exact timeline' }],
         provider: 'apple',
       } satisfies LyricsPayload);
-    const player = new PlayerCoordinator(
-      lyricsService(find),
-      artworkPaletteService(),
-      testStore(),
-    );
+    const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
 
     ingestBackfillTrack(player, {
       title: 'Track A',
@@ -1094,9 +1143,7 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     player.ingest(VIN, 'MediaNowPlayingTitle', 'Track B');
     await vi.advanceTimersByTimeAsync(LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS);
-    expect(player.snapshot().lyrics.lines[0]?.text).toBe(
-      'Track B provisional timeline',
-    );
+    expect(player.snapshot().lyrics.lines[0]?.text).toBe('Track B provisional timeline');
 
     player.ingest(VIN, 'MediaNowPlayingArtist', 'Artist B');
     player.ingest(VIN, 'MediaNowPlayingAlbum', 'Album B');
@@ -1104,23 +1151,24 @@ describe('PlayerCoordinator lyric resolution', () => {
     await vi.advanceTimersByTimeAsync(LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS);
 
     expect(find).toHaveBeenCalledTimes(3);
-    expect(find.mock.calls[2]?.[0]).toEqual(expect.objectContaining({
-      title: 'Track B',
-      artist: 'Artist B',
-      album: 'Album B',
-      durationMs: 200_000,
-    }));
-    expect(find.mock.calls[2]?.[1]).toEqual({ bypassLocalCache: true });
-    expect(player.snapshot().lyrics.lines[0]?.text).toBe(
-      'Track B provisional timeline',
+    expect(find.mock.calls[2]?.[0]).toEqual(
+      expect.objectContaining({
+        title: 'Track B',
+        artist: 'Artist B',
+        album: 'Album B',
+        durationMs: 200_000,
+      }),
     );
+    expect(find.mock.calls[2]?.[1]).toEqual({ bypassLocalCache: true });
+    expect(player.snapshot().lyrics.lines[0]?.text).toBe('Track B provisional timeline');
   });
 
   it('logs anonymous initial, replaced, and pinned version decisions', async () => {
     const productionConfig = config as typeof config & { isProduction: boolean };
     productionConfig.isProduction = true;
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'a', startMs: 0, text: 'Private Track A lyrics' }],
@@ -1139,11 +1187,7 @@ describe('PlayerCoordinator lyric resolution', () => {
         provider: 'apple',
         providerId: 3,
       } satisfies LyricsPayload);
-    const player = new PlayerCoordinator(
-      lyricsService(find),
-      artworkPaletteService(),
-      testStore(),
-    );
+    const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
 
     try {
       ingestBackfillTrack(player, {
@@ -1166,11 +1210,7 @@ describe('PlayerCoordinator lyric resolution', () => {
       await vi.advanceTimersByTimeAsync(LYRICS_TRANSITION_INCOMPLETE_SETTLE_MS);
 
       const events = info.mock.calls.map(([message]) => JSON.parse(String(message)));
-      expect(events.map((event) => event.action)).toEqual([
-        'initial',
-        'replaced',
-        'pinned',
-      ]);
+      expect(events.map((event) => event.action)).toEqual(['initial', 'replaced', 'pinned']);
       expect(events.every((event) => /^[a-f0-9]{16}$/.test(event.trackHash))).toBe(true);
       expect(info.mock.calls.map(([message]) => String(message)).join('\n')).not.toMatch(
         /Private Track|Private Artist|Private Album|Private corrected lyrics/,
@@ -1181,22 +1221,31 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it.each([
-    ['a synced hit', {
-      kind: 'synced',
-      lines: [{ id: '0', startMs: 0, text: 'Found' }],
-      provider: 'lrclib',
-    }],
-    ['a definitive miss', {
-      kind: 'missing',
-      lines: [],
-      provider: null,
-    }],
-    ['a retryable failure', {
-      kind: 'missing',
-      lines: [],
-      provider: null,
-      retryable: true,
-    }],
+    [
+      'a synced hit',
+      {
+        kind: 'synced',
+        lines: [{ id: '0', startMs: 0, text: 'Found' }],
+        provider: 'lrclib',
+      },
+    ],
+    [
+      'a definitive miss',
+      {
+        kind: 'missing',
+        lines: [],
+        provider: null,
+      },
+    ],
+    [
+      'a retryable failure',
+      {
+        kind: 'missing',
+        lines: [],
+        provider: null,
+        retryable: true,
+      },
+    ],
   ] satisfies Array<[string, LyricsPayload]>)(
     'observes complete playback independently from %s',
     async (_label, payload) => {
@@ -1429,60 +1478,58 @@ describe('PlayerCoordinator lyric resolution', () => {
     });
   });
 
-  it.each(fieldPermutations(APPLE_BACKFILL_TEST_FIELDS).map((order) => [
-    order.join(' → '),
-    order,
-  ] as const))(
-    'does not mix a completed 30-second resend into the next track (%s)',
-    async (_label, order) => {
-      const observePlayback = vi.fn();
-      const player = new PlayerCoordinator(
-        lyricsService(
-          vi.fn(async (): Promise<LyricsPayload> => ({
-            kind: 'missing',
-            lines: [],
-            provider: null,
-          })),
-          observePlayback,
-        ),
-        artworkPaletteService(),
-        testStore(),
-      );
-      const trackA: TrackMetadata = {
-        title: 'Track A',
-        artist: 'Artist A',
-        album: 'Album A',
-        durationMs: 180_000,
-        source: '',
-      };
-      const trackB: TrackMetadata = {
-        title: 'Track B',
-        artist: 'Artist B',
-        album: 'Album B',
-        durationMs: 200_000,
-        source: '',
-      };
+  it.each(
+    fieldPermutations(APPLE_BACKFILL_TEST_FIELDS).map(
+      (order) => [order.join(' → '), order] as const,
+    ),
+  )('does not mix a completed 60-second resend into the next track (%s)', async (_label, order) => {
+    const observePlayback = vi.fn();
+    const player = new PlayerCoordinator(
+      lyricsService(
+        vi.fn(async (): Promise<LyricsPayload> => ({
+          kind: 'missing',
+          lines: [],
+          provider: null,
+        })),
+        observePlayback,
+      ),
+      artworkPaletteService(),
+      testStore(),
+    );
+    const trackA: TrackMetadata = {
+      title: 'Track A',
+      artist: 'Artist A',
+      album: 'Album A',
+      durationMs: 180_000,
+      source: '',
+    };
+    const trackB: TrackMetadata = {
+      title: 'Track B',
+      artist: 'Artist B',
+      album: 'Album B',
+      durationMs: 200_000,
+      source: '',
+    };
 
-      ingestBackfillTrack(player, trackA);
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
+    ingestBackfillTrack(player, trackA);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
 
-      await vi.advanceTimersByTimeAsync(30_000);
-      ingestBackfillTrack(player, trackA);
+    await vi.advanceTimersByTimeAsync(60_000);
+    ingestBackfillTrack(player, trackA);
+    expect(observePlayback).toHaveBeenCalledTimes(1);
+
+    for (const field of order) {
+      ingestBackfillTrackField(player, trackB, field);
       expect(observePlayback).toHaveBeenCalledTimes(1);
+    }
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(observePlayback).toHaveBeenCalledTimes(1);
 
-      for (const field of order) {
-        ingestBackfillTrackField(player, trackB, field);
-        expect(observePlayback).toHaveBeenCalledTimes(1);
-      }
-      await vi.advanceTimersByTimeAsync(1_999);
-      expect(observePlayback).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(1);
-      expect(observePlayback).toHaveBeenCalledTimes(2);
-      expect(observePlayback).toHaveBeenLastCalledWith(trackB);
-    },
-  );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(observePlayback).toHaveBeenCalledTimes(2);
+    expect(observePlayback).toHaveBeenLastCalledWith(trackB);
+  });
 
   it.each(APPLE_BACKFILL_TEST_FIELDS)(
     'does not flush an unconfirmed short track when %s changes first',
@@ -1575,34 +1622,46 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it.each([
-    ['artist', {
-      title: 'Track B',
-      artist: 'Shared Artist',
-      album: 'Album B',
-      durationMs: 200_000,
-      source: '',
-    }],
-    ['album', {
-      title: 'Track B',
-      artist: 'Artist B',
-      album: 'Shared Album',
-      durationMs: 200_000,
-      source: '',
-    }],
-    ['duration', {
-      title: 'Track B',
-      artist: 'Artist B',
-      album: 'Album B',
-      durationMs: 180_000,
-      source: '',
-    }],
-    ['artist, album, and duration', {
-      title: 'Track B',
-      artist: 'Shared Artist',
-      album: 'Shared Album',
-      durationMs: 180_000,
-      source: '',
-    }],
+    [
+      'artist',
+      {
+        title: 'Track B',
+        artist: 'Shared Artist',
+        album: 'Album B',
+        durationMs: 200_000,
+        source: '',
+      },
+    ],
+    [
+      'album',
+      {
+        title: 'Track B',
+        artist: 'Artist B',
+        album: 'Shared Album',
+        durationMs: 200_000,
+        source: '',
+      },
+    ],
+    [
+      'duration',
+      {
+        title: 'Track B',
+        artist: 'Artist B',
+        album: 'Album B',
+        durationMs: 180_000,
+        source: '',
+      },
+    ],
+    [
+      'artist, album, and duration',
+      {
+        title: 'Track B',
+        artist: 'Shared Artist',
+        album: 'Shared Album',
+        durationMs: 180_000,
+        source: '',
+      },
+    ],
   ] satisfies Array<[string, TrackMetadata]>)(
     'observes a new track when Tesla does not re-emit its shared %s metadata',
     async (_label, trackB) => {
@@ -1632,13 +1691,11 @@ describe('PlayerCoordinator lyric resolution', () => {
       expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
 
       // Fleet Telemetry emits changed values immediately, but unchanged fields
-      // may not be sent again until the 30-second resend interval.
+      // may not be sent again until the 60-second resend interval.
       ingestBackfillTrack(
         player,
         trackB,
-        APPLE_BACKFILL_TEST_FIELDS.filter(
-          (field) => trackB[field] !== trackA[field],
-        ),
+        APPLE_BACKFILL_TEST_FIELDS.filter((field) => trackB[field] !== trackA[field]),
       );
       await vi.advanceTimersByTimeAsync(1_999);
       expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
@@ -1797,11 +1854,7 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
 
     player.ingest(VIN, 'MediaNowPlayingTitle', 'Track B');
-    ingestBackfillTrack(
-      player,
-      trackA,
-      ['artist', 'album', 'durationMs'],
-    );
+    ingestBackfillTrack(player, trackA, ['artist', 'album', 'durationMs']);
     await vi.advanceTimersByTimeAsync(2_000);
 
     expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
@@ -2016,11 +2069,7 @@ describe('PlayerCoordinator lyric resolution', () => {
       ingestBackfillTrack(player, trackA);
       await vi.advanceTimersByTimeAsync(2_000);
       for (const field of APPLE_BACKFILL_TEST_FIELDS) {
-        ingestBackfillTrackField(
-          player,
-          field === changedField ? trackB : trackA,
-          field,
-        );
+        ingestBackfillTrackField(player, field === changedField ? trackB : trackA, field);
       }
       await vi.advanceTimersByTimeAsync(1_100);
       expect(observePlayback).toHaveBeenCalledExactlyOnceWith(trackA);
@@ -2243,11 +2292,7 @@ describe('PlayerCoordinator lyric resolution', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     ingestBackfillTrack(player, trackB);
     await vi.advanceTimersByTimeAsync(500);
-    ingestBackfillTrack(
-      player,
-      trackC,
-      ['artist', 'album', 'durationMs', 'title'],
-    );
+    ingestBackfillTrack(player, trackC, ['artist', 'album', 'durationMs', 'title']);
     await vi.advanceTimersByTimeAsync(2_000);
 
     expect(observePlayback).toHaveBeenCalledTimes(2);
@@ -2454,11 +2499,7 @@ describe('PlayerCoordinator lyric resolution', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     for (let resend = 0; resend < 3; resend += 1) {
       await vi.advanceTimersByTimeAsync(30_000);
-      ingestBackfillTrack(
-        player,
-        track,
-        [...APPLE_BACKFILL_TEST_FIELDS].reverse(),
-      );
+      ingestBackfillTrack(player, track, [...APPLE_BACKFILL_TEST_FIELDS].reverse());
     }
     await vi.advanceTimersByTimeAsync(2_000);
 
@@ -2498,7 +2539,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   );
 
   it('retries a temporary failure after five seconds and stops after success', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'missing',
         lines: [],
@@ -2528,7 +2570,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('updates the cache without replacing stale usable lyrics during playback', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'lrclib', startMs: 1_000, text: 'LRCLIB timeline' }],
@@ -2553,18 +2596,21 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     expect(find).toHaveBeenCalledTimes(2);
     expect(find.mock.calls[1]?.[1]).toEqual({ bypassLocalCache: true });
-    expect(player.snapshot().lyrics).toEqual(expect.objectContaining({
-      kind: 'synced',
-      provider: 'lrclib',
-      providerId: 41,
-    }));
+    expect(player.snapshot().lyrics).toEqual(
+      expect.objectContaining({
+        kind: 'synced',
+        provider: 'lrclib',
+        providerId: 41,
+      }),
+    );
     expect(player.snapshot().lyrics.lines[0]?.text).toBe('LRCLIB timeline');
     expect(player.snapshot().lyrics.retryable).not.toBe(true);
     expect(player.snapshot().lyrics.notice).toBeUndefined();
   });
 
   it('keeps static work-cache lyrics visible while retrying in the background', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'plain',
         lines: [{ id: 'plain-0', startMs: 0, text: 'Cached original lyrics' }],
@@ -2582,20 +2628,24 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     player.ingest(VIN, 'MediaNowPlayingTitle', 'Midnight Circuit (Live)');
     await vi.advanceTimersByTimeAsync(200);
-    expect(player.snapshot().lyrics).toEqual(expect.objectContaining({
-      kind: 'plain',
-      plainText: 'Cached original lyrics',
-    }));
+    expect(player.snapshot().lyrics).toEqual(
+      expect.objectContaining({
+        kind: 'plain',
+        plainText: 'Cached original lyrics',
+      }),
+    );
 
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(find).toHaveBeenCalledTimes(2);
     expect(find.mock.calls[1]?.[1]).toEqual({ bypassLocalCache: true });
-    expect(player.snapshot().lyrics).toEqual(expect.objectContaining({
-      kind: 'plain',
-      plainText: 'Cached original lyrics',
-      fallbackKind: 'work-cache',
-    }));
+    expect(player.snapshot().lyrics).toEqual(
+      expect.objectContaining({
+        kind: 'plain',
+        plainText: 'Cached original lyrics',
+        fallbackKind: 'work-cache',
+      }),
+    );
     expect(player.snapshot().lyrics.retryable).not.toBe(true);
     await vi.advanceTimersByTimeAsync(180_000);
     expect(find).toHaveBeenCalledTimes(2);
@@ -2610,7 +2660,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       retryable: true,
       fallbackKind: 'work-cache',
     } satisfies LyricsPayload;
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce(fallback)
       .mockResolvedValueOnce({
         kind: 'missing',
@@ -2627,12 +2678,14 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     expect(find).toHaveBeenCalledTimes(2);
     expect(find.mock.calls[1]?.[1]).toEqual({ bypassLocalCache: true });
-    expect(player.snapshot().lyrics).toEqual(expect.objectContaining({
-      kind: 'plain',
-      plainText: 'Cached original lyrics',
-      retryable: true,
-      notice: '歌词来源仍然暂时不可用。',
-    }));
+    expect(player.snapshot().lyrics).toEqual(
+      expect.objectContaining({
+        kind: 'plain',
+        plainText: 'Cached original lyrics',
+        retryable: true,
+        notice: '歌词来源仍然暂时不可用。',
+      }),
+    );
   });
 
   it('keeps usable lyrics visible when a background source retry rejects', async () => {
@@ -2645,7 +2698,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       retryable: true,
       fallbackKind: 'work-cache',
     } satisfies LyricsPayload;
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce(fallback)
       .mockRejectedValueOnce(new Error('temporary source failure'));
     const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
@@ -2656,12 +2710,14 @@ describe('PlayerCoordinator lyric resolution', () => {
 
     expect(find).toHaveBeenCalledTimes(2);
     expect(find.mock.calls[1]?.[1]).toEqual({ bypassLocalCache: true });
-    expect(player.snapshot().lyrics).toEqual(expect.objectContaining({
-      kind: 'plain',
-      plainText: 'Cached original lyrics',
-      retryable: true,
-      notice: '歌词查询没有完成，请稍后切歌或刷新重试。',
-    }));
+    expect(player.snapshot().lyrics).toEqual(
+      expect.objectContaining({
+        kind: 'plain',
+        plainText: 'Cached original lyrics',
+        retryable: true,
+        notice: '歌词查询没有完成，请稍后切歌或刷新重试。',
+      }),
+    );
   });
 
   it('does not retry a definitive miss', async () => {
@@ -2680,8 +2736,11 @@ describe('PlayerCoordinator lyric resolution', () => {
 
   it('rechecks a miss when album metadata arrives later', async () => {
     let finishFirst: ((lyrics: LyricsPayload) => void) | undefined;
-    const first = new Promise<LyricsPayload>((resolve) => { finishFirst = resolve; });
-    const find = vi.fn()
+    const first = new Promise<LyricsPayload>((resolve) => {
+      finishFirst = resolve;
+    });
+    const find = vi
+      .fn()
       .mockReturnValueOnce(first)
       .mockResolvedValueOnce({
         kind: 'synced',
@@ -2706,7 +2765,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('keeps displayed lyrics pinned when album metadata arrives after incomplete settle', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'incomplete', startMs: 0, text: 'Incomplete album timeline' }],
@@ -2738,7 +2798,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('refreshes a non-empty album correction without replacing displayed lyrics', async () => {
-    const find = vi.fn()
+    const find = vi
+      .fn()
       .mockResolvedValueOnce({
         kind: 'synced',
         lines: [{ id: 'first', startMs: 0, text: 'First album timeline' }],
@@ -2769,14 +2830,16 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('does not force-refresh a miss for an unchanged repeated album', async () => {
-    const find = vi.fn(async (
-      _track: TrackMetadata,
-      _options?: { bypassLocalCache?: boolean },
-    ): Promise<LyricsPayload> => ({
-      kind: 'missing',
-      lines: [],
-      provider: null,
-    }));
+    const find = vi.fn(
+      async (
+        _track: TrackMetadata,
+        _options?: { bypassLocalCache?: boolean },
+      ): Promise<LyricsPayload> => ({
+        kind: 'missing',
+        lines: [],
+        provider: null,
+      }),
+    );
     const player = new PlayerCoordinator(lyricsService(find), artworkPaletteService(), testStore());
 
     player.ingest(VIN, 'MediaNowPlayingTitle', 'Midnight Circuit');
@@ -2801,11 +2864,15 @@ describe('PlayerCoordinator lyric resolution', () => {
 
   it('does not build an unobserved snapshot on the telemetry player hot path', async () => {
     const store = testStore();
-    const player = new PlayerCoordinator(lyricsService(async () => ({
-      kind: 'missing',
-      lines: [],
-      provider: null,
-    })), artworkPaletteService(), store);
+    const player = new PlayerCoordinator(
+      lyricsService(async () => ({
+        kind: 'missing',
+        lines: [],
+        provider: null,
+      })),
+      artworkPaletteService(),
+      store,
+    );
 
     player.selectedVin();
     player.ingest(VIN, 'MediaNowPlayingElapsed', 1_000);
@@ -2866,17 +2933,21 @@ describe('PlayerCoordinator lyric resolution', () => {
     player.ingest(VIN, 'MediaNowPlayingDuration', 214_000);
 
     await expect(player.listLyricsCandidates()).resolves.toEqual({ candidates: [] });
-    expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Midnight Circuit',
-      artist: 'Local Drive',
-      album: 'After Dark',
-      durationMs: 214_000,
-    }));
+    expect(listCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Midnight Circuit',
+        artist: 'Local Drive',
+        album: 'After Dark',
+        durationMs: 214_000,
+      }),
+    );
   });
 
   it('keeps a selected candidate visible when an older lookup finishes later', async () => {
     let finishLookup: ((lyrics: LyricsPayload) => void) | undefined;
-    const pendingLookup = new Promise<LyricsPayload>((resolve) => { finishLookup = resolve; });
+    const pendingLookup = new Promise<LyricsPayload>((resolve) => {
+      finishLookup = resolve;
+    });
     const service = lyricsService(vi.fn(() => pendingLookup));
     const selected: LyricsPayload = {
       kind: 'plain',
@@ -2955,23 +3026,27 @@ describe('PlayerCoordinator lyric resolution', () => {
       }),
     );
     expect(paletteFind).toHaveBeenCalledTimes(1);
-    expect(paletteFind).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Midnight Circuit',
-      artist: 'Local Drive',
-      album: 'After Dark',
-      durationMs: 214_000,
-    }));
+    expect(paletteFind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Midnight Circuit',
+        artist: 'Local Drive',
+        album: 'After Dark',
+        durationMs: 214_000,
+      }),
+    );
     expect(player.snapshot().lyrics.kind).toBe('synced');
     expect(player.snapshot().artworkPalette?.source).toBe('apple');
     expect(observePlayback).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1_300);
-    expect(observePlayback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      title: 'Midnight Circuit',
-      artist: 'Local Drive',
-      album: 'After Dark',
-      durationMs: 214_000,
-    }));
+    expect(observePlayback).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: 'Midnight Circuit',
+        artist: 'Local Drive',
+        album: 'After Dark',
+        durationMs: 214_000,
+      }),
+    );
   });
 
   it('publishes the current artwork fallback reason without mixing it into the palette', async () => {
@@ -3109,12 +3184,14 @@ describe('PlayerCoordinator lyric resolution', () => {
     }>((resolve) => {
       releaseFirst = resolve;
     });
-    const resolveCached = vi.fn((track: TrackMetadata) => track.title === 'Track A'
-      ? firstResult
-      : Promise.resolve({
-        palette: secondPalette,
-        status: { state: 'success' as const, source: 'supabase-cache' as const },
-      }));
+    const resolveCached = vi.fn((track: TrackMetadata) =>
+      track.title === 'Track A'
+        ? firstResult
+        : Promise.resolve({
+            palette: secondPalette,
+            status: { state: 'success' as const, source: 'supabase-cache' as const },
+          }),
+    );
     const resolve = vi.fn(async () => {
       throw new Error('The slow artwork lookup must not start for an exact cache hit');
     });
@@ -3149,7 +3226,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('retries a retryable artwork fallback and stops after a successful retry', async () => {
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: { primary: '#3B3E45', secondary: '#191C22', source: 'fallback' },
         status: {
@@ -3191,7 +3269,8 @@ describe('PlayerCoordinator lyric resolution', () => {
   });
 
   it('records fallback resolution once and defers delivery until a retry succeeds', async () => {
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: { primary: '#3B3E45', secondary: '#191C22', source: 'fallback' },
         status: {
@@ -3250,7 +3329,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       secondary: '#884422',
       source: 'apple',
     };
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: firstPalette,
         status: { state: 'success', source: 'catalog', stage: 'primary-core' },
@@ -3344,7 +3424,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       secondary: '#DD8800',
       source: 'apple',
     };
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: firstPalette,
         status: { state: 'success', source: 'catalog', stage: 'primary-core' },
@@ -3401,7 +3482,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       secondary: '#DD8800',
       source: 'apple',
     };
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: firstPalette,
         status: { state: 'success', source: 'catalog', stage: 'primary-core' },
@@ -3466,7 +3548,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       secondary: '#DD8800',
       source: 'apple',
     };
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: firstPalette,
         status: { state: 'success', source: 'catalog', stage: 'primary-core' },
@@ -3545,7 +3628,8 @@ describe('PlayerCoordinator lyric resolution', () => {
         stage: 'primary-core' as const,
       },
     };
-    const resolve = vi.fn()
+    const resolve = vi
+      .fn()
       .mockResolvedValueOnce({
         palette: firstPalette,
         status: { state: 'success', source: 'catalog', stage: 'primary-core' },
@@ -3597,9 +3681,12 @@ describe('PlayerCoordinator lyric resolution', () => {
 
   it('does not let a late artwork lookup overwrite the newest track palette', async () => {
     const resolvers = new Map<string, (palette: ArtworkPalette) => void>();
-    const paletteFind = vi.fn((track: TrackMetadata) => new Promise<ArtworkPalette>((resolve) => {
-      resolvers.set(track.title, resolve);
-    }));
+    const paletteFind = vi.fn(
+      (track: TrackMetadata) =>
+        new Promise<ArtworkPalette>((resolve) => {
+          resolvers.set(track.title, resolve);
+        }),
+    );
     const player = new PlayerCoordinator(
       lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
       artworkPaletteService(paletteFind),
@@ -3797,7 +3884,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       source: 'apple',
     };
     const paletteFind = vi.fn(async (track: TrackMetadata): Promise<ArtworkPalette> =>
-      track.title === 'Track A' ? firstPalette : secondPalette);
+      track.title === 'Track A' ? firstPalette : secondPalette,
+    );
     const player = new PlayerCoordinator(
       lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
       artworkPaletteService(paletteFind),
@@ -3865,7 +3953,8 @@ describe('PlayerCoordinator lyric resolution', () => {
       source: 'apple',
     };
     const paletteFind = vi.fn(async (track: TrackMetadata): Promise<ArtworkPalette> =>
-      track.title === 'Track A' ? firstPalette : secondPalette);
+      track.title === 'Track A' ? firstPalette : secondPalette,
+    );
     const player = new PlayerCoordinator(
       lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
       artworkPaletteService(paletteFind),
@@ -3890,12 +3979,14 @@ describe('PlayerCoordinator lyric resolution', () => {
     player.ingest(VIN, 'MediaNowPlayingAlbum', 'Album B');
     await vi.advanceTimersByTimeAsync(700);
 
-    expect(paletteFind).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      title: 'Track B',
-      artist: 'Artist B',
-      album: 'Album B',
-      durationMs: 200_000,
-    }));
+    expect(paletteFind).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: 'Track B',
+        artist: 'Artist B',
+        album: 'Album B',
+        durationMs: 200_000,
+      }),
+    );
     expect(player.snapshot().artworkPalette).toEqual(secondPalette);
   });
 
