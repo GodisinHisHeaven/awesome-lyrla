@@ -42,14 +42,14 @@
     "@fontsource-variable/urbanist": "^5.2.7",
     "aedes": "^1.1.1",
     "dotenv": "^17.2.3",
-    "fastify": "^5.6.2",
+    "fastify": "^5.12.5",
     "lucide-react": "^0.468.0",
     "opencc-js": "^1.4.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.9.6",
     "saxes": "^6.0.0",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.5",
     "zod": "^4.1.13"
   },
   "devDependencies": {

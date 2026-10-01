@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decryptJson, encryptJson } from './crypto.js';
-import {
-  createInitialState,
-  type PersistedState,
-  type StateStore,
-} from './store.js';
+import { createInitialState, type PersistedState, type StateStore } from './store.js';
 import {
   normalizeTelemetryConfigureResponse,
   PLAYER_TELEMETRY_FIELDS,
@@ -23,24 +19,38 @@ afterEach(() => {
 
 describe('player telemetry configuration', () => {
   it('periodically resends static player fields but keeps elapsed event-driven', () => {
-    expect(PLAYER_TELEMETRY_FIELDS.MediaNowPlayingArtist.resend_interval_seconds).toBe(30);
-    expect(PLAYER_TELEMETRY_FIELDS.MediaPlaybackSource.resend_interval_seconds).toBe(30);
+    for (const field of [
+      'MediaNowPlayingTitle',
+      'MediaNowPlayingArtist',
+      'MediaNowPlayingAlbum',
+      'MediaNowPlayingDuration',
+      'MediaPlaybackSource',
+      'MediaPlaybackStatus',
+    ] as const) {
+      expect(PLAYER_TELEMETRY_FIELDS[field]).toEqual({
+        interval_seconds: 1,
+        resend_interval_seconds: 60,
+      });
+    }
     expect(PLAYER_TELEMETRY_FIELDS.MediaNowPlayingElapsed).toEqual({ interval_seconds: 1 });
     expect(PLAYER_TELEMETRY_FIELDS.DestinationName).toEqual({
       interval_seconds: 1,
       resend_interval_seconds: 60,
     });
     expect(PLAYER_TELEMETRY_FIELDS.MinutesToArrival).toEqual({
-      interval_seconds: 5,
+      interval_seconds: 15,
       resend_interval_seconds: 30,
+      minimum_delta: 0.5,
     });
     expect(PLAYER_TELEMETRY_FIELDS.MilesToArrival).toEqual({
-      interval_seconds: 5,
+      interval_seconds: 15,
       resend_interval_seconds: 30,
+      minimum_delta: 0.1,
     });
     expect(PLAYER_TELEMETRY_FIELDS.ExpectedEnergyPercentAtTripArrival).toEqual({
-      interval_seconds: 5,
+      interval_seconds: 15,
       resend_interval_seconds: 30,
+      minimum_delta: 1,
     });
   });
 
@@ -170,11 +180,14 @@ describe('Tesla token mutation ordering', () => {
   it('does not let an older refresh overwrite a newer OAuth authorization', async () => {
     let state: PersistedState = {
       ...createInitialState(),
-      teslaTokens: encryptJson({
-        accessToken: 'expired-access',
-        refreshToken: 'old-refresh',
-        expiresAt: Date.now() - 1_000,
-      }, TOKEN_KEY),
+      teslaTokens: encryptJson(
+        {
+          accessToken: 'expired-access',
+          refreshToken: 'old-refresh',
+          expiresAt: Date.now() - 1_000,
+        },
+        TOKEN_KEY,
+      ),
     };
     const store = {
       readTeslaTokens: () => state.teslaTokens,
@@ -195,17 +208,23 @@ describe('Tesla token mutation ordering', () => {
         const body = new URLSearchParams(String(init?.body));
         if (body.get('grant_type') === 'refresh_token') {
           await refreshGate;
-          return new Response(JSON.stringify({
-            access_token: 'refreshed-old-access',
-            refresh_token: 'refreshed-old-refresh',
-            expires_in: 3_600,
-          }), { status: 200 });
+          return new Response(
+            JSON.stringify({
+              access_token: 'refreshed-old-access',
+              refresh_token: 'refreshed-old-refresh',
+              expires_in: 3_600,
+            }),
+            { status: 200 },
+          );
         }
-        return new Response(JSON.stringify({
-          access_token: 'new-oauth-access',
-          refresh_token: 'new-oauth-refresh',
-          expires_in: 7_200,
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            access_token: 'new-oauth-access',
+            refresh_token: 'new-oauth-refresh',
+            expires_in: 7_200,
+          }),
+          { status: 200 },
+        );
       }
       return new Response(JSON.stringify({ response: [] }), { status: 200 });
     });
@@ -222,16 +241,20 @@ describe('Tesla token mutation ordering', () => {
     releaseRefresh();
     await Promise.all([refreshRequest, authorization]);
 
-    expect(decryptJson<{
-      accessToken: string;
-      refreshToken: string;
-      expiresAt: number;
-      authorizationVersion?: number;
-    }>(state.teslaTokens!, TOKEN_KEY)).toEqual(expect.objectContaining({
-      accessToken: 'new-oauth-access',
-      refreshToken: 'new-oauth-refresh',
-      authorizationVersion: TESLA_AUTHORIZATION_VERSION,
-    }));
+    expect(
+      decryptJson<{
+        accessToken: string;
+        refreshToken: string;
+        expiresAt: number;
+        authorizationVersion?: number;
+      }>(state.teslaTokens!, TOKEN_KEY),
+    ).toEqual(
+      expect.objectContaining({
+        accessToken: 'new-oauth-access',
+        refreshToken: 'new-oauth-refresh',
+        authorizationVersion: TESLA_AUTHORIZATION_VERSION,
+      }),
+    );
     expect(service.authorizationIsCurrent()).toBe(true);
   });
 });
@@ -248,12 +271,16 @@ describe('Fleet Telemetry reconciliation', () => {
         telemetrySynced: false,
       }),
       readSelectedVin: () => VIN,
-      readTeslaTokens: () => encryptJson({
-        accessToken: 'access-token',
-        refreshToken: 'refresh-token',
-        expiresAt: Date.now() + 60_000,
-        authorizationVersion: TESLA_AUTHORIZATION_VERSION,
-      }, TOKEN_KEY),
+      readTeslaTokens: () =>
+        encryptJson(
+          {
+            accessToken: 'access-token',
+            refreshToken: 'refresh-token',
+            expiresAt: Date.now() + 60_000,
+            authorizationVersion: TESLA_AUTHORIZATION_VERSION,
+          },
+          TOKEN_KEY,
+        ),
     } as unknown as StateStore;
   }
 
@@ -267,9 +294,7 @@ describe('Fleet Telemetry reconciliation', () => {
 
   it('re-sends the current fields for an existing accepted configuration', async () => {
     const service = new TeslaService(reconciliationStore(true, Date.now() - 60_000), TOKEN_KEY);
-    const configure = vi
-      .spyOn(service, 'configureTelemetry')
-      .mockResolvedValue({ accepted: true });
+    const configure = vi.spyOn(service, 'configureTelemetry').mockResolvedValue({ accepted: true });
 
     await expect(service.reconcileTelemetryConfiguration()).resolves.toBe(true);
     expect(configure).toHaveBeenCalledOnce();
@@ -281,9 +306,6 @@ describe('Fleet Telemetry reconciliation', () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await expect(service.reconcileTelemetryConfiguration()).resolves.toBe(false);
-    expect(warning).toHaveBeenCalledWith(
-      'Tesla telemetry reconciliation deferred:',
-      'Error',
-    );
+    expect(warning).toHaveBeenCalledWith('Tesla telemetry reconciliation deferred:', 'Error');
   });
 });

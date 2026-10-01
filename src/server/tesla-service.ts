@@ -52,17 +52,24 @@ export const TESLA_OAUTH_SCOPES = [
 export const TESLA_AUTHORIZATION_VERSION = 1;
 
 export const PLAYER_TELEMETRY_FIELDS = {
-  MediaNowPlayingTitle: { interval_seconds: 1, resend_interval_seconds: 30 },
-  MediaNowPlayingArtist: { interval_seconds: 1, resend_interval_seconds: 30 },
-  MediaNowPlayingAlbum: { interval_seconds: 1, resend_interval_seconds: 30 },
-  MediaNowPlayingDuration: { interval_seconds: 1, resend_interval_seconds: 30 },
+  // Keep changes responsive; periodic resends restore unchanged state after reconnects.
+  MediaNowPlayingTitle: { interval_seconds: 1, resend_interval_seconds: 60 },
+  MediaNowPlayingArtist: { interval_seconds: 1, resend_interval_seconds: 60 },
+  MediaNowPlayingAlbum: { interval_seconds: 1, resend_interval_seconds: 60 },
+  MediaNowPlayingDuration: { interval_seconds: 1, resend_interval_seconds: 60 },
   MediaNowPlayingElapsed: { interval_seconds: 1 },
-  MediaPlaybackSource: { interval_seconds: 1, resend_interval_seconds: 30 },
-  MediaPlaybackStatus: { interval_seconds: 1, resend_interval_seconds: 30 },
+  MediaPlaybackSource: { interval_seconds: 1, resend_interval_seconds: 60 },
+  MediaPlaybackStatus: { interval_seconds: 1, resend_interval_seconds: 60 },
   DestinationName: { interval_seconds: 1, resend_interval_seconds: 60 },
-  MinutesToArrival: { interval_seconds: 5, resend_interval_seconds: 30 },
-  MilesToArrival: { interval_seconds: 5, resend_interval_seconds: 30 },
-  ExpectedEnergyPercentAtTripArrival: { interval_seconds: 5, resend_interval_seconds: 30 },
+  // Deltas use Tesla's native units: minutes, miles and percentage points.
+  // Resend even unchanged values before NavigationState's 90-second expiry.
+  MinutesToArrival: { interval_seconds: 15, resend_interval_seconds: 30, minimum_delta: 0.5 },
+  MilesToArrival: { interval_seconds: 15, resend_interval_seconds: 30, minimum_delta: 0.1 },
+  ExpectedEnergyPercentAtTripArrival: {
+    interval_seconds: 15,
+    resend_interval_seconds: 30,
+    minimum_delta: 1,
+  },
 } as const;
 
 export interface NormalizedTelemetryConfigureResponse {
@@ -72,7 +79,10 @@ export interface NormalizedTelemetryConfigureResponse {
 }
 
 function normalizedKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
 }
 
 function knownSkipReason(value: string): Exclude<TelemetrySkipReason, 'unknown'> | null {
@@ -169,7 +179,9 @@ class TeslaSetupError extends Error {
 
 function telemetrySkipError(reasons: TelemetrySkipReason[]): TeslaSetupError {
   if (reasons.includes('missing_key')) {
-    return new TeslaSetupError('车辆尚未配对虚拟钥匙。请先点击“配对虚拟钥匙”并在 Tesla App 中完成添加。');
+    return new TeslaSetupError(
+      '车辆尚未配对虚拟钥匙。请先点击“配对虚拟钥匙”并在 Tesla App 中完成添加。',
+    );
   }
   if (reasons.includes('unsupported_firmware')) {
     return new TeslaSetupError('车辆固件暂不支持 Fleet Telemetry；请先更新车辆软件。');
@@ -305,9 +317,7 @@ export class TeslaService {
     }
     if (!config.telemetry.host) throw new Error('TELEMETRY_HOST 尚未配置');
     if (!this.authorizationIsCurrent()) {
-      throw new TeslaSetupError(
-        'Tesla 授权尚未完成。请重新打开设置页完成 Tesla 官方授权。',
-      );
+      throw new TeslaSetupError('Tesla 授权尚未完成。请重新打开设置页完成 Tesla 官方授权。');
     }
     const vin = this.requireSelectedVin();
     const ca = await readFile(config.telemetry.caPath, 'utf8');
@@ -337,11 +347,11 @@ export class TeslaService {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        throw new TeslaSetupError(
-          'Tesla 授权尚未完成。请重新打开设置页完成 Tesla 官方授权。',
-        );
+        throw new TeslaSetupError('Tesla 授权尚未完成。请重新打开设置页完成 Tesla 官方授权。');
       }
-      throw new Error(`Tesla telemetry configuration failed (${response.status}): ${JSON.stringify(payload)}`);
+      throw new Error(
+        `Tesla telemetry configuration failed (${response.status}): ${JSON.stringify(payload)}`,
+      );
     }
     const normalized = normalizeTelemetryConfigureResponse(payload);
     if (!normalized.accepted) {
@@ -403,10 +413,9 @@ export class TeslaService {
 
   async deleteTelemetryConfiguration(): Promise<void> {
     const vin = this.requireSelectedVin();
-    await this.fleetRequest(
-      `/api/1/vehicles/${encodeURIComponent(vin)}/fleet_telemetry_config`,
-      { method: 'DELETE' },
-    );
+    await this.fleetRequest(`/api/1/vehicles/${encodeURIComponent(vin)}/fleet_telemetry_config`, {
+      method: 'DELETE',
+    });
     await this.store.update((draft) => {
       draft.telemetryAccepted = false;
       draft.telemetryConfiguredAt = null;
@@ -447,10 +456,11 @@ export class TeslaService {
     if (tokens.expiresAt > Date.now() + 60_000) return tokens.accessToken;
 
     if (!this.refreshPromise) {
-      this.refreshPromise = this.serializeTokenMutation(() => this.refreshAccessToken())
-        .finally(() => {
+      this.refreshPromise = this.serializeTokenMutation(() => this.refreshAccessToken()).finally(
+        () => {
           this.refreshPromise = undefined;
-        });
+        },
+      );
     }
     return this.refreshPromise;
   }
@@ -502,7 +512,9 @@ export class TeslaService {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(`Tesla Fleet API request failed (${response.status}): ${JSON.stringify(payload)}`);
+      throw new Error(
+        `Tesla Fleet API request failed (${response.status}): ${JSON.stringify(payload)}`,
+      );
     }
     return payload;
   }

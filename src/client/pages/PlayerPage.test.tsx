@@ -4,7 +4,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { PlayerSnapshot } from '../../shared/contracts.js';
 import { usePlayer } from '../hooks/usePlayer.js';
-import { LyricsStage, PlayerPage } from './PlayerPage.js';
+import { ambientFieldPalette } from '../ambient-palette.js';
+import { AmbientBackdrop, LyricsStage, PlayerPage } from './PlayerPage.js';
 
 vi.mock('../hooks/usePlayer.js', () => ({ usePlayer: vi.fn() }));
 
@@ -49,7 +50,7 @@ function sampledField(
     columns: 6 as const,
     rows: 4 as const,
     base,
-    colors: Array.from({ length: 24 }, (_, index) => index % 6 < 3 ? left : right),
+    colors: Array.from({ length: 24 }, (_, index) => (index % 6 < 3 ? left : right)),
   };
 }
 
@@ -71,6 +72,32 @@ function installMatchMedia(matches: boolean): void {
 }
 
 describe('PlayerPage Tesla companion layout', () => {
+  it.each([false, true])(
+    'finishes background palette transitions (reduced motion: %s)',
+    (reducedMotion) => {
+      vi.useFakeTimers();
+      installMatchMedia(reducedMotion);
+      const first = ambientFieldPalette(snapshot);
+      const second = { ...first, key: 'test-second', primary: '10 20 30' };
+      const third = { ...first, key: 'test-third', primary: '40 50 60' };
+      const { container, rerender, unmount } = render(<AmbientBackdrop colors={first} />);
+      try {
+        rerender(<AmbientBackdrop colors={second} />);
+        act(() => vi.advanceTimersByTime(40));
+        rerender(<AmbientBackdrop colors={third} />);
+        act(() => vi.advanceTimersByTime(1_500));
+        act(() => vi.advanceTimersByTime(1_500));
+        expect(container.querySelector('.ambient-palette-layer.is-active')).toHaveStyle({
+          '--palette-one-rgb': '40 50 60',
+        });
+        expect(container.querySelector('.is-transitioning')).toBeNull();
+      } finally {
+        unmount();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   beforeAll(() => {
     HTMLElement.prototype.scrollTo = vi.fn();
   });
@@ -123,7 +150,11 @@ describe('PlayerPage Tesla companion layout', () => {
       demoAction: vi.fn(),
     });
 
-    const { container } = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    const { container } = render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
     const player = container.querySelector<HTMLElement>('.am-player');
 
     expect(screen.getByText('实时同步')).toBeInTheDocument();
@@ -131,17 +162,28 @@ describe('PlayerPage Tesla companion layout', () => {
     expect(player).toHaveClass('am-player--liquid-glass');
     expect(player).toHaveClass('am-player--spatial-background');
     expect(container.querySelector('[data-renderer="spatial-canvas"]')).toBeInTheDocument();
-    expect(container.querySelector('.spatial-field-surface.is-active')?.getAttribute('data-field-key'))
-      .toContain('fallback:');
+    expect(
+      container.querySelector('.spatial-field-surface.is-active')?.getAttribute('data-field-key'),
+    ).toContain('fallback:');
     expect(player).not.toHaveAttribute('data-preview-motion');
     expect(lyricLine('Streetlights draw a silver line')).toHaveAttribute('aria-current', 'true');
     expect(lyricLine('Streetlights draw a silver line')).toHaveAttribute('data-state', 'active');
-    expect(lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-opacity')).toBe('0.99');
-    expect(lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-scale')).toBe('1');
-    expect(lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-glow-alpha')).toBe('0.02');
-    expect(lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-breath-ms')).toBe('');
+    expect(
+      lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-opacity'),
+    ).toBe('0.99');
+    expect(
+      lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-scale'),
+    ).toBe('1');
+    expect(
+      lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-glow-alpha'),
+    ).toBe('0.02');
+    expect(
+      lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-breath-ms'),
+    ).toBe('');
     expect(lyricLine('The city folds behind the glass')).toHaveAttribute('data-state', 'next');
-    expect(lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-progress')).toBe('');
+    expect(
+      lyricLine('Streetlights draw a silver line').style.getPropertyValue('--lyric-progress'),
+    ).toBe('');
     expect(screen.queryByText('Midnight Circuit')).not.toBeInTheDocument();
     expect(screen.queryByText('Local Drive')).not.toBeInTheDocument();
     expect(screen.queryByText('After Dark')).not.toBeInTheDocument();
@@ -174,7 +216,11 @@ describe('PlayerPage Tesla companion layout', () => {
       demoAction: vi.fn(),
     });
 
-    render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
 
     const navigation = screen.getByLabelText('当前导航');
     expect(navigation).toHaveTextContent('目的地');
@@ -227,85 +273,125 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(initialSnapshot, 13_000));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       const lyricsView = view.container.querySelector('.am-lyrics-view');
       const lyricsStage = view.container.querySelector('.am-lyrics-rail');
       expect(observerConstructions).toBe(1);
       expect(lyricLine('The city folds behind the glass')).toHaveAttribute('aria-current', 'true');
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...initialSnapshot,
-        track: {
-          ...initialSnapshot.track!,
-          title: 'Next Track',
-          durationMs: 198_000,
-        },
-        playbackStatus: 'paused',
-        manualOffsetMs: -10_000,
-        lyricsTrackMatchesCurrent: false,
-        capturedAtMs: initialSnapshot.capturedAtMs + 100,
-      }, 100));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState(
+          {
+            ...initialSnapshot,
+            track: {
+              ...initialSnapshot.track!,
+              title: 'Next Track',
+              durationMs: 198_000,
+            },
+            playbackStatus: 'paused',
+            manualOffsetMs: -10_000,
+            lyricsTrackMatchesCurrent: false,
+            capturedAtMs: initialSnapshot.capturedAtMs + 100,
+          },
+          100,
+        ),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(view.container.querySelector('.am-lyrics-view')).toBe(lyricsView);
       expect(view.container.querySelector('.am-lyrics-rail')).toBeNull();
       expect(screen.queryByText('Streetlights draw a silver line')).not.toBeInTheDocument();
       expect(screen.getByText('正在载入歌词…')).toBeInTheDocument();
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...initialSnapshot,
-        track: {
-          ...initialSnapshot.track!,
-          title: 'Next Track',
-          artist: 'Next Artist',
-          durationMs: 198_000,
-        },
-        playbackStatus: 'paused',
-        manualOffsetMs: -10_000,
-        lyricsTrackMatchesCurrent: false,
-        lyrics: { kind: 'loading', lines: [], provider: null },
-        capturedAtMs: initialSnapshot.capturedAtMs + 200,
-      }, 200));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState(
+          {
+            ...initialSnapshot,
+            track: {
+              ...initialSnapshot.track!,
+              title: 'Next Track',
+              artist: 'Next Artist',
+              durationMs: 198_000,
+            },
+            playbackStatus: 'paused',
+            manualOffsetMs: -10_000,
+            lyricsTrackMatchesCurrent: false,
+            lyrics: { kind: 'loading', lines: [], provider: null },
+            capturedAtMs: initialSnapshot.capturedAtMs + 200,
+          },
+          200,
+        ),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(view.container.querySelector('.am-lyrics-view')).toBe(lyricsView);
       expect(view.container.querySelector('.am-lyrics-rail')).toBeNull();
       expect(screen.queryByText('Streetlights draw a silver line')).not.toBeInTheDocument();
       expect(screen.getByText('正在载入歌词…')).toBeInTheDocument();
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...initialSnapshot,
-        track: {
-          ...initialSnapshot.track!,
-          title: 'Next Track',
-          artist: 'Next Artist',
-          durationMs: 198_000,
-        },
-        playbackStatus: 'paused',
-        manualOffsetMs: -10_000,
-        lyricsTrackMatchesCurrent: false,
-        lyrics: { kind: 'loading', lines: [], provider: null },
-        capturedAtMs: initialSnapshot.capturedAtMs + 300,
-      }, 300));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState(
+          {
+            ...initialSnapshot,
+            track: {
+              ...initialSnapshot.track!,
+              title: 'Next Track',
+              artist: 'Next Artist',
+              durationMs: 198_000,
+            },
+            playbackStatus: 'paused',
+            manualOffsetMs: -10_000,
+            lyricsTrackMatchesCurrent: false,
+            lyrics: { kind: 'loading', lines: [], provider: null },
+            capturedAtMs: initialSnapshot.capturedAtMs + 300,
+          },
+          300,
+        ),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(view.container.querySelector('.am-lyrics-rail')).toBeNull();
       expect(screen.getByText('正在载入歌词…')).toBeInTheDocument();
       expect(observerConstructions).toBe(1);
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...initialSnapshot,
-        track: {
-          ...initialSnapshot.track!,
-          title: 'Next Track',
-          artist: 'Next Artist',
-          durationMs: 198_000,
-        },
-        elapsedMs: 400,
-        playbackStatus: 'playing',
-        manualOffsetMs: 0,
-        lyricsTrackMatchesCurrent: true,
-        lyrics: nextLyrics,
-        capturedAtMs: initialSnapshot.capturedAtMs + 400,
-      }, 400));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState(
+          {
+            ...initialSnapshot,
+            track: {
+              ...initialSnapshot.track!,
+              title: 'Next Track',
+              artist: 'Next Artist',
+              durationMs: 198_000,
+            },
+            elapsedMs: 400,
+            playbackStatus: 'playing',
+            manualOffsetMs: 0,
+            lyricsTrackMatchesCurrent: true,
+            lyrics: nextLyrics,
+            capturedAtMs: initialSnapshot.capturedAtMs + 400,
+          },
+          400,
+        ),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       const committedLine = screen.getByText('New timeline first line');
       const replacementLyricsStage = view.container.querySelector('.am-lyrics-rail');
       expect(view.container.querySelector('.am-lyrics-view')).toBe(lyricsView);
@@ -315,22 +401,31 @@ describe('PlayerPage Tesla companion layout', () => {
       expect(lyricLine('New timeline first line')).toHaveAttribute('aria-current', 'true');
       expect(observerConstructions).toBe(2);
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...initialSnapshot,
-        track: {
-          ...initialSnapshot.track!,
-          title: 'Next Track',
-          artist: 'Next Artist',
-          durationMs: 198_000,
-        },
-        elapsedMs: 500,
-        lyrics: {
-          ...nextLyrics,
-          lines: nextLyrics.lines.map((line) => ({ ...line })),
-        },
-        capturedAtMs: initialSnapshot.capturedAtMs + 500,
-      }, 500));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState(
+          {
+            ...initialSnapshot,
+            track: {
+              ...initialSnapshot.track!,
+              title: 'Next Track',
+              artist: 'Next Artist',
+              durationMs: 198_000,
+            },
+            elapsedMs: 500,
+            lyrics: {
+              ...nextLyrics,
+              lines: nextLyrics.lines.map((line) => ({ ...line })),
+            },
+            capturedAtMs: initialSnapshot.capturedAtMs + 500,
+          },
+          500,
+        ),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(view.container.querySelector('.am-lyrics-rail')).toBe(replacementLyricsStage);
       expect(screen.getByText('New timeline first line')).toBe(committedLine);
       expect(observerConstructions).toBe(2);
@@ -367,17 +462,27 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(initialSnapshot));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(lyricLine('Retained first line')).toHaveAttribute('aria-current', 'true');
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...initialSnapshot,
-        track: { ...initialSnapshot.track!, title: 'Replacement Track' },
-        lyricsTrackMatchesCurrent: false,
-        lyrics: { kind: 'loading', lines: [], provider: null },
-        capturedAtMs: 200,
-      }));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState({
+          ...initialSnapshot,
+          track: { ...initialSnapshot.track!, title: 'Replacement Track' },
+          lyricsTrackMatchesCurrent: false,
+          lyrics: { kind: 'loading', lines: [], provider: null },
+          capturedAtMs: 200,
+        }),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
 
       const rail = view.container.querySelector('.am-lyrics-rail');
       expect(rail).toBeNull();
@@ -436,9 +541,17 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(initialSnapshot));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       vi.mocked(usePlayer).mockReturnValue(playerState(unresolvedClockSnapshot));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
 
       const rail = view.container.querySelector('.am-lyrics-rail');
       expect(screen.getByText('Clock pending first line')).toBeInTheDocument();
@@ -449,14 +562,20 @@ describe('PlayerPage Tesla companion layout', () => {
       act(() => vi.advanceTimersByTime(2_000));
       expect(lyricLine('Clock pending first line')).not.toHaveAttribute('aria-current');
 
-      vi.mocked(usePlayer).mockReturnValue(playerState({
-        ...unresolvedClockSnapshot,
-        elapsedMs: 500,
-        capturedAtMs: 300,
-        playbackClockReady: true,
-        snapshotRevision: 3,
-      }));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      vi.mocked(usePlayer).mockReturnValue(
+        playerState({
+          ...unresolvedClockSnapshot,
+          elapsedMs: 500,
+          capturedAtMs: 300,
+          playbackClockReady: true,
+          snapshotRevision: 3,
+        }),
+      );
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(rail).toHaveAttribute('data-running', 'true');
       view.unmount();
     } finally {
@@ -484,27 +603,37 @@ describe('PlayerPage Tesla companion layout', () => {
     });
 
     vi.mocked(usePlayer).mockReturnValue(playerState(initialSnapshot));
-    const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    const view = render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
     const rail = view.container.querySelector('.am-lyrics-rail');
 
-    vi.mocked(usePlayer).mockReturnValue(playerState({
-      ...initialSnapshot,
-      track: {
-        ...initialSnapshot.track!,
-        album: 'New Album Identity',
-      },
-      elapsedMs: 100,
-      capturedAtMs: 200,
-      trackGeneration: 2,
-      lyricsGeneration: 2,
-      lyricsTrackMatchesCurrent: true,
-      snapshotRevision: 2,
-      lyrics: {
-        ...initialSnapshot.lyrics,
-        lines: initialSnapshot.lyrics.lines.map((line) => ({ ...line })),
-      },
-    }));
-    view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    vi.mocked(usePlayer).mockReturnValue(
+      playerState({
+        ...initialSnapshot,
+        track: {
+          ...initialSnapshot.track!,
+          album: 'New Album Identity',
+        },
+        elapsedMs: 100,
+        capturedAtMs: 200,
+        trackGeneration: 2,
+        lyricsGeneration: 2,
+        lyricsTrackMatchesCurrent: true,
+        snapshotRevision: 2,
+        lyrics: {
+          ...initialSnapshot.lyrics,
+          lines: initialSnapshot.lyrics.lines.map((line) => ({ ...line })),
+        },
+      }),
+    );
+    view.rerender(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText('Streetlights draw a silver line')).toBeInTheDocument();
     expect(view.container.querySelector('.am-lyrics-rail')).toBe(rail);
@@ -533,7 +662,11 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(snapshot));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       const lyricsView = view.container.querySelector('.am-lyrics-view');
       const lyricsStage = view.container.querySelector('.am-lyrics-rail');
       const lyricsTrack = view.container.querySelector('.am-lyrics-track');
@@ -546,7 +679,11 @@ describe('PlayerPage Tesla companion layout', () => {
         lyrics: { kind: 'loading', lines: [], provider: null },
       };
       vi.mocked(usePlayer).mockReturnValue(playerState(loadingSnapshot));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(screen.getByText('Streetlights draw a silver line')).toBeInTheDocument();
       expect(view.container.querySelector('.am-lyrics-track')).toBe(lyricsTrack);
       expect(lyricsTrack).toHaveClass('is-positioned');
@@ -563,7 +700,11 @@ describe('PlayerPage Tesla companion layout', () => {
         },
       };
       vi.mocked(usePlayer).mockReturnValue(playerState(resolvedSnapshot));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
 
       expect(screen.getByText('夜空中最亮的星')).toBeInTheDocument();
       expect(view.container.querySelector('.am-lyrics-view')).toBe(lyricsView);
@@ -584,15 +725,18 @@ describe('PlayerPage Tesla companion layout', () => {
   });
 
   it('positions a replacement timeline from its own frame before the first layout completes', () => {
-    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+    const clientHeight = vi
+      .spyOn(HTMLElement.prototype, 'clientHeight', 'get')
       .mockImplementation(function getClientHeight(this: HTMLElement) {
         return this.classList.contains('am-lyrics-rail') ? 600 : 0;
       });
-    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+    const clientWidth = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
       .mockImplementation(function getClientWidth(this: HTMLElement) {
         return this.classList.contains('am-lyrics-rail') ? 1_000 : 0;
       });
-    const offsetTop = vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get')
+    const offsetTop = vi
+      .spyOn(HTMLElement.prototype, 'offsetTop', 'get')
       .mockImplementation(function getOffsetTop(this: HTMLElement) {
         if (this.textContent === 'Old first line') return 100;
         if (this.textContent === 'Old second line') return 180;
@@ -600,7 +744,8 @@ describe('PlayerPage Tesla companion layout', () => {
         if (this.textContent === 'New focused position') return 320;
         return 0;
       });
-    const offsetHeight = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get')
+    const offsetHeight = vi
+      .spyOn(HTMLElement.prototype, 'offsetHeight', 'get')
       .mockImplementation(function getOffsetHeight(this: HTMLElement) {
         return this.classList.contains('am-lyric-line') ? 80 : 0;
       });
@@ -643,7 +788,9 @@ describe('PlayerPage Tesla companion layout', () => {
       expect(view.container.querySelector('.am-lyrics-track')).toBe(track);
       expect(lyricLine('New focused position')).toHaveAttribute('aria-current', 'true');
       expect(lyricLine('New focused position')).toHaveAttribute('data-state', 'active');
-      expect(lyricLine('New focused position').style.getPropertyValue('--lyric-opacity')).toBe('0.99');
+      expect(lyricLine('New focused position').style.getPropertyValue('--lyric-opacity')).toBe(
+        '0.99',
+      );
       expect(track?.style.transform).toBe('translate3d(0, -120px, 0)');
     } finally {
       clientHeight.mockRestore();
@@ -677,11 +824,13 @@ describe('PlayerPage Tesla companion layout', () => {
     expect(chineseLine).toHaveAttribute('data-script', 'cjk');
     expect(chineseLine.querySelector('[data-script="cjk"]')).toHaveAttribute('lang', 'zh-Hans');
     expect(mixedLine).toHaveTextContent('I still 想你 every night');
-    expect([...mixedLine!.querySelectorAll<HTMLElement>('.am-lyric-script')].map((run) => ({
-      language: run.getAttribute('lang'),
-      script: run.dataset.script,
-      text: run.textContent,
-    }))).toEqual([
+    expect(
+      [...mixedLine!.querySelectorAll<HTMLElement>('.am-lyric-script')].map((run) => ({
+        language: run.getAttribute('lang'),
+        script: run.dataset.script,
+        text: run.textContent,
+      })),
+    ).toEqual([
       { language: null, script: 'latin', text: 'I still ' },
       { language: 'zh-Hans', script: 'cjk', text: '想你 ' },
       { language: null, script: 'latin', text: 'every night' },
@@ -696,10 +845,12 @@ describe('PlayerPage Tesla companion layout', () => {
     let resolveFonts!: () => void;
     let frameCallback: FrameRequestCallback | undefined;
     let resizeCallback: ResizeObserverCallback | undefined;
-    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallback = callback;
-      return 42;
-    });
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frameCallback = callback;
+        return 42;
+      });
     const ready = new Promise<void>((resolve) => {
       resolveFonts = resolve;
     });
@@ -803,7 +954,11 @@ describe('PlayerPage Tesla companion layout', () => {
       demoAction: vi.fn(),
     });
 
-    const { container } = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    const { container } = render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
     const paragraphs = container.querySelectorAll<HTMLElement>('.am-plain-lyrics p');
 
     expect(paragraphs).toHaveLength(2);
@@ -827,10 +982,17 @@ describe('PlayerPage Tesla companion layout', () => {
       demoAction: vi.fn(),
     });
 
-    render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText('暂时没有同步歌词')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '在设置中添加 LRC' })).toHaveAttribute('href', '/setup');
+    expect(screen.getByRole('link', { name: '在设置中添加 LRC' })).toHaveAttribute(
+      'href',
+      '/setup',
+    );
   });
 
   it('renders a validated real artwork field in the persistent spatial backdrop', () => {
@@ -852,7 +1014,11 @@ describe('PlayerPage Tesla companion layout', () => {
       demoAction: vi.fn(),
     });
 
-    const { container } = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    const { container } = render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
     const layer = container.querySelector<HTMLElement>('.spatial-field-surface.is-active');
     const player = container.querySelector<HTMLElement>('.am-player--liquid-glass');
 
@@ -861,14 +1027,20 @@ describe('PlayerPage Tesla companion layout', () => {
     expect(container.querySelector('.ambient-palette-layer')).toBeNull();
     expect(layer?.getAttribute('data-field-key')).toContain('field:0123456789abcdef');
     expect(layer).toHaveAttribute('data-motion', 'running');
-    expect(container.querySelector('[data-renderer="spatial-canvas"]')).toHaveAttribute('data-motion', 'full');
+    expect(container.querySelector('[data-renderer="spatial-canvas"]')).toHaveAttribute(
+      'data-motion',
+      'full',
+    );
     expect(layer?.style.getPropertyValue('--spatial-base-rgb')).toBe('23 32 42');
-    expect(Number.parseInt(layer?.style.getPropertyValue('--spatial-cycle-a') ?? ''))
-      .toBeGreaterThanOrEqual(89);
-    expect(Number.parseInt(layer?.style.getPropertyValue('--spatial-cycle-b') ?? ''))
-      .toBeGreaterThanOrEqual(43);
-    expect(Number.parseInt(layer?.style.getPropertyValue('--spatial-cycle-c') ?? ''))
-      .toBeGreaterThanOrEqual(131);
+    expect(
+      Number.parseInt(layer?.style.getPropertyValue('--spatial-cycle-a') ?? ''),
+    ).toBeGreaterThanOrEqual(89);
+    expect(
+      Number.parseInt(layer?.style.getPropertyValue('--spatial-cycle-b') ?? ''),
+    ).toBeGreaterThanOrEqual(43);
+    expect(
+      Number.parseInt(layer?.style.getPropertyValue('--spatial-cycle-c') ?? ''),
+    ).toBeGreaterThanOrEqual(131);
     expect(container.querySelectorAll('canvas[data-spatial-layer]')).toHaveLength(6);
     expect(container.querySelectorAll('canvas[data-spatial-layer="flow-a"]')).toHaveLength(2);
     expect(container.querySelectorAll('canvas[data-spatial-layer="flow-b"]')).toHaveLength(2);
@@ -881,11 +1053,15 @@ describe('PlayerPage Tesla companion layout', () => {
   it('crossfades real sampled fields for 2.2 seconds without restarting for metadata-only updates', () => {
     vi.useFakeTimers();
     let frameCallback: FrameRequestCallback | undefined;
-    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallback = callback;
-      return 7;
-    });
-    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frameCallback = callback;
+        return 7;
+      });
+    const cancelFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(() => undefined);
     const missingLyrics: PlayerSnapshot['lyrics'] = {
       kind: 'missing',
       lines: [],
@@ -929,12 +1105,22 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(firstSnapshot));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBeNull();
 
       vi.mocked(usePlayer).mockReturnValue(playerState(secondSnapshot));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
-      const incoming = view.container.querySelector<HTMLElement>('.spatial-field-surface.is-transitioning');
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
+      const incoming = view.container.querySelector<HTMLElement>(
+        '.spatial-field-surface.is-transitioning',
+      );
       expect(incoming?.getAttribute('data-field-key')).toContain('field:fedcba9876543210');
       expect(incoming).not.toHaveClass('is-visible');
 
@@ -944,12 +1130,20 @@ describe('PlayerPage Tesla companion layout', () => {
       expect(incoming).toHaveClass('is-visible');
       act(() => vi.advanceTimersByTime(700));
       vi.mocked(usePlayer).mockReturnValue(playerState(sameColorMetadataUpdate));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
-      expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBe(incoming);
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
+      expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBe(
+        incoming,
+      );
       expect(requestFrame).toHaveBeenCalledTimes(2);
 
       act(() => vi.advanceTimersByTime(699));
-      expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBe(incoming);
+      expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBe(
+        incoming,
+      );
       act(() => vi.advanceTimersByTime(1));
       fireEvent.transitionEnd(incoming!, { propertyName: 'opacity' });
       const active = view.container.querySelector<HTMLElement>('.spatial-field-surface.is-active');
@@ -966,11 +1160,15 @@ describe('PlayerPage Tesla companion layout', () => {
   it('reuses the incoming layer and skips a superseded field during rapid updates', () => {
     vi.useFakeTimers();
     let frameCallback: FrameRequestCallback | undefined;
-    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallback = callback;
-      return requestFrame.mock.calls.length;
-    });
-    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frameCallback = callback;
+        return requestFrame.mock.calls.length;
+      });
+    const cancelFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(() => undefined);
     const initial: PlayerSnapshot = {
       ...snapshot,
       playbackStatus: 'paused',
@@ -1013,26 +1211,46 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(initial));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       vi.mocked(usePlayer).mockReturnValue(playerState(incomingSnapshot));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       act(() => frameCallback?.(0));
-      expect(view.container.querySelector('.spatial-field-surface.is-transitioning'))
-        .not.toHaveClass('is-visible');
+      expect(
+        view.container.querySelector('.spatial-field-surface.is-transitioning'),
+      ).not.toHaveClass('is-visible');
       act(() => frameCallback?.(16));
       act(() => vi.advanceTimersByTime(800));
-      const visibleIncoming = view.container.querySelector<HTMLElement>('.spatial-field-surface.is-transitioning');
+      const visibleIncoming = view.container.querySelector<HTMLElement>(
+        '.spatial-field-surface.is-transitioning',
+      );
       expect(visibleIncoming?.getAttribute('data-field-key')).toContain('field:2222222222222222');
       expect(visibleIncoming).toHaveClass('is-visible');
 
       vi.mocked(usePlayer).mockReturnValue(playerState(resolved));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
-      const reusedLayer = view.container.querySelector<HTMLElement>('.spatial-field-surface.is-transitioning');
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
+      const reusedLayer = view.container.querySelector<HTMLElement>(
+        '.spatial-field-surface.is-transitioning',
+      );
       expect(reusedLayer).toBe(visibleIncoming);
       expect(reusedLayer?.getAttribute('data-field-key')).toContain('field:3333333333333333');
       expect(reusedLayer).not.toHaveClass('is-visible');
-      expect(view.container.querySelector<HTMLElement>('.spatial-field-surface.is-active')
-        ?.getAttribute('data-field-key')).toContain('field:1111111111111111');
+      expect(
+        view.container
+          .querySelector<HTMLElement>('.spatial-field-surface.is-active')
+          ?.getAttribute('data-field-key'),
+      ).toContain('field:1111111111111111');
       expect(requestFrame).toHaveBeenCalledTimes(3);
 
       act(() => frameCallback?.(0));
@@ -1041,8 +1259,11 @@ describe('PlayerPage Tesla companion layout', () => {
       act(() => frameCallback?.(16));
       expect(reusedLayer).toHaveClass('is-visible');
       fireEvent.transitionEnd(reusedLayer!, { propertyName: 'opacity' });
-      expect(view.container.querySelector<HTMLElement>('.spatial-field-surface.is-active')
-        ?.getAttribute('data-field-key')).toContain('field:3333333333333333');
+      expect(
+        view.container
+          .querySelector<HTMLElement>('.spatial-field-surface.is-active')
+          ?.getAttribute('data-field-key'),
+      ).toContain('field:3333333333333333');
       expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBeNull();
       view.unmount();
     } finally {
@@ -1076,17 +1297,30 @@ describe('PlayerPage Tesla companion layout', () => {
     });
 
     vi.mocked(usePlayer).mockReturnValue(playerState(stillSnapshot, 4_000));
-    const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    const view = render(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
     const active = view.container.querySelector('.spatial-field-surface.is-active');
     requestFrame.mockClear();
     canvasPutImageData.mockClear();
 
-    vi.mocked(usePlayer).mockReturnValue(playerState({
-      ...stillSnapshot,
-      elapsedMs: 9_000,
-      capturedAtMs: stillSnapshot.capturedAtMs + 5_000,
-    }, 9_000));
-    view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+    vi.mocked(usePlayer).mockReturnValue(
+      playerState(
+        {
+          ...stillSnapshot,
+          elapsedMs: 9_000,
+          capturedAtMs: stillSnapshot.capturedAtMs + 5_000,
+        },
+        9_000,
+      ),
+    );
+    view.rerender(
+      <MemoryRouter>
+        <PlayerPage />
+      </MemoryRouter>,
+    );
 
     expect(view.container.querySelector('.spatial-field-surface.is-active')).toBe(active);
     expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBeNull();
@@ -1099,7 +1333,9 @@ describe('PlayerPage Tesla companion layout', () => {
     installMatchMedia(true);
     vi.useFakeTimers();
     const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(11);
-    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const cancelFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(() => undefined);
     const initial: PlayerSnapshot = {
       ...snapshot,
       playbackStatus: 'paused',
@@ -1133,20 +1369,37 @@ describe('PlayerPage Tesla companion layout', () => {
 
     try {
       vi.mocked(usePlayer).mockReturnValue(playerState(initial));
-      const view = render(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      const view = render(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
       vi.mocked(usePlayer).mockReturnValue(playerState(next));
-      view.rerender(<MemoryRouter><PlayerPage /></MemoryRouter>);
+      view.rerender(
+        <MemoryRouter>
+          <PlayerPage />
+        </MemoryRouter>,
+      );
 
-      expect(view.container.querySelector('[data-renderer="spatial-canvas"]'))
-        .toHaveAttribute('data-motion', 'reduced');
-      expect(view.container.querySelector('.spatial-field-surface.is-transitioning'))
-        .toHaveClass('is-visible');
-      expect(view.container.querySelector<HTMLElement>('.spatial-field-surface.is-active')
-        ?.getAttribute('data-field-key')).toContain('field:4444444444444444');
+      expect(view.container.querySelector('[data-renderer="spatial-canvas"]')).toHaveAttribute(
+        'data-motion',
+        'reduced',
+      );
+      expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toHaveClass(
+        'is-visible',
+      );
+      expect(
+        view.container
+          .querySelector<HTMLElement>('.spatial-field-surface.is-active')
+          ?.getAttribute('data-field-key'),
+      ).toContain('field:4444444444444444');
       expect(requestFrame).not.toHaveBeenCalled();
       act(() => vi.advanceTimersByTime(0));
-      expect(view.container.querySelector<HTMLElement>('.spatial-field-surface.is-active')
-        ?.getAttribute('data-field-key')).toContain('field:5555555555555555');
+      expect(
+        view.container
+          .querySelector<HTMLElement>('.spatial-field-surface.is-active')
+          ?.getAttribute('data-field-key'),
+      ).toContain('field:5555555555555555');
       expect(view.container.querySelector('.spatial-field-surface.is-transitioning')).toBeNull();
       view.unmount();
     } finally {
@@ -1251,13 +1504,91 @@ describe('PlayerPage Tesla companion layout', () => {
         clockRevision={102}
       />,
     );
-    const progressAfterSmallCorrection = Number(track?.style.getPropertyValue('--lyrics-track-progress'));
+    const progressAfterSmallCorrection = Number(
+      track?.style.getPropertyValue('--lyrics-track-progress'),
+    );
     expect(progressAfterSmallCorrection).toBeGreaterThanOrEqual(progressAfterTelemetry);
     act(() => vi.advanceTimersByTime(50));
-    expect(Number(track?.style.getPropertyValue('--lyrics-track-progress'))).toBeGreaterThan(progressAfterSmallCorrection);
+    expect(Number(track?.style.getPropertyValue('--lyrics-track-progress'))).toBeGreaterThan(
+      progressAfterSmallCorrection,
+    );
     unmount();
     vi.useRealTimers();
   });
+
+  it.each([351, 400, 800, 1_000])(
+    'keeps the current lyric after a %i ms backward report',
+    (lagMs) => {
+      vi.useFakeTimers();
+      const lines = [
+        { id: 'a', startMs: 0, text: 'Jitter previous' },
+        { id: 'b', startMs: 10_000, text: 'Jitter current' },
+        { id: 'c', startMs: 12_000, text: 'Jitter next' },
+      ];
+      const view = (elapsed: number, revision: number) => (
+        <LyricsStage
+          lines={lines}
+          elapsedMs={elapsed}
+          offsetMs={0}
+          playbackStatus="playing"
+          durationMs={30_000}
+          clockRevision={revision}
+        />
+      );
+      const { rerender, unmount } = render(view(9_000, 1));
+      act(() => vi.advanceTimersByTime(1_100));
+      expect(lyricLine('Jitter current')).toHaveAttribute('aria-current', 'true');
+      rerender(view(10_100 - lagMs, 2));
+      expect(lyricLine('Jitter current')).toHaveAttribute('aria-current', 'true');
+      act(() => vi.advanceTimersByTime(200));
+      expect(lyricLine('Jitter current')).toHaveAttribute('aria-current', 'true');
+      act(() => vi.advanceTimersByTime(6_000));
+      expect(lyricLine('Jitter next')).toHaveAttribute('aria-current', 'true');
+      unmount();
+      vi.useRealTimers();
+    },
+  );
+
+  it.each([false, true])(
+    'schedules a lyric boundary during deceleration (reduced motion: %s)',
+    (reducedMotion) => {
+      vi.useFakeTimers();
+      installMatchMedia(reducedMotion);
+      const lines = [
+        { id: 'a', startMs: 0, text: 'Slowed previous' },
+        { id: 'b', startMs: 1_000, text: 'Slowed current' },
+      ];
+      const view = (elapsed: number, revision: number, offsetMs = 0) => (
+        <LyricsStage
+          lines={lines}
+          elapsedMs={elapsed}
+          offsetMs={offsetMs}
+          playbackStatus="playing"
+          durationMs={10_000}
+          clockRevision={revision}
+        />
+      );
+      const { container, rerender, unmount } = render(view(0, 1));
+      act(() => vi.advanceTimersByTime(850));
+      const track = container.querySelector<HTMLElement>('.am-lyrics-track')!;
+      const progress = Number(track.style.getPropertyValue('--lyrics-track-progress'));
+      rerender(view(450, 2));
+      expect(
+        Number(track.style.getPropertyValue('--lyrics-track-progress')),
+      ).toBeGreaterThanOrEqual(progress);
+      act(() => vi.advanceTimersByTime(180));
+      expect(lyricLine('Slowed previous')).toHaveAttribute('aria-current', 'true');
+      act(() => vi.advanceTimersByTime(10));
+      expect(lyricLine('Slowed current')).toHaveAttribute('aria-current', 'true');
+      // A manual lyric offset must take effect immediately even while correcting.
+      rerender(view(450, 2, -500));
+      expect(lyricLine('Slowed previous')).toHaveAttribute('aria-current', 'true');
+      rerender(view(450, 2, 0));
+      expect(lyricLine('Slowed current')).toHaveAttribute('aria-current', 'true');
+      unmount();
+      vi.useRealTimers();
+    },
+  );
 
   it('freezes an in-flight handoff while paused and resumes from the same sample', () => {
     vi.useFakeTimers();
@@ -1295,7 +1626,9 @@ describe('PlayerPage Tesla companion layout', () => {
     act(() => vi.advanceTimersByTime(500));
     expect(track?.style.getPropertyValue('--lyrics-track-progress')).toBe(frozenProgress);
     expect(track?.style.transform).toBe(frozenTransform);
-    expect(lyricLine('Freeze first line').style.getPropertyValue('--lyric-opacity')).toBe(frozenOpacity);
+    expect(lyricLine('Freeze first line').style.getPropertyValue('--lyric-opacity')).toBe(
+      frozenOpacity,
+    );
 
     rerender(
       <LyricsStage
@@ -1308,7 +1641,9 @@ describe('PlayerPage Tesla companion layout', () => {
       />,
     );
     act(() => vi.advanceTimersByTime(50));
-    expect(Number(track?.style.getPropertyValue('--lyrics-track-progress'))).toBeGreaterThan(Number(frozenProgress));
+    expect(Number(track?.style.getPropertyValue('--lyrics-track-progress'))).toBeGreaterThan(
+      Number(frozenProgress),
+    );
     unmount();
     vi.useRealTimers();
   });
@@ -1352,7 +1687,7 @@ describe('PlayerPage Tesla companion layout', () => {
     vi.useRealTimers();
   });
 
-  it('honors a same-value telemetry revision as a hard backward seek', () => {
+  it.each([850, 1_850])('honors a restart revision after %i ms', (elapsed) => {
     vi.useFakeTimers();
     const lines = [
       { id: 'a', startMs: 0, text: 'Seek first line' },
@@ -1369,8 +1704,11 @@ describe('PlayerPage Tesla companion layout', () => {
       />,
     );
 
-    act(() => vi.advanceTimersByTime(850));
-    expect(lyricLine('Seek second line')).toHaveAttribute('data-state', 'incoming');
+    act(() => vi.advanceTimersByTime(elapsed));
+    expect(lyricLine('Seek second line')).toHaveAttribute(
+      'data-state',
+      elapsed < 1_000 ? 'incoming' : 'active',
+    );
     rerender(
       <LyricsStage
         lines={lines}
@@ -1460,21 +1798,25 @@ describe('PlayerPage Tesla companion layout', () => {
   });
 
   it('centers an equal-timestamp group as one visual cue', () => {
-    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+    const clientHeight = vi
+      .spyOn(HTMLElement.prototype, 'clientHeight', 'get')
       .mockImplementation(function getClientHeight(this: HTMLElement) {
         return this.classList.contains('am-lyrics-rail') ? 600 : 0;
       });
-    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+    const clientWidth = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
       .mockImplementation(function getClientWidth(this: HTMLElement) {
         return this.classList.contains('am-lyrics-rail') ? 1_000 : 0;
       });
-    const offsetTop = vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get')
+    const offsetTop = vi
+      .spyOn(HTMLElement.prototype, 'offsetTop', 'get')
       .mockImplementation(function getOffsetTop(this: HTMLElement) {
         if (this.textContent === 'Harmony centered') return 200;
         if (this.textContent === 'Main centered') return 280;
         return 100;
       });
-    const offsetHeight = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get')
+    const offsetHeight = vi
+      .spyOn(HTMLElement.prototype, 'offsetHeight', 'get')
       .mockImplementation(function getOffsetHeight(this: HTMLElement) {
         if (this.textContent === 'Harmony centered') return 60;
         if (this.textContent === 'Main centered') return 100;
@@ -1495,8 +1837,9 @@ describe('PlayerPage Tesla companion layout', () => {
         />,
       );
 
-      expect(container.querySelector<HTMLElement>('.am-lyrics-track')?.style.transform)
-        .toBe('translate3d(0, -50px, 0)');
+      expect(container.querySelector<HTMLElement>('.am-lyrics-track')?.style.transform).toBe(
+        'translate3d(0, -50px, 0)',
+      );
     } finally {
       clientHeight.mockRestore();
       clientWidth.mockRestore();
@@ -1521,7 +1864,10 @@ describe('PlayerPage Tesla companion layout', () => {
       />,
     );
 
-    expect(container.querySelector('.am-lyrics-rail')).toHaveAttribute('data-reduced-motion', 'true');
+    expect(container.querySelector('.am-lyrics-rail')).toHaveAttribute(
+      'data-reduced-motion',
+      'true',
+    );
     expect(lyricLine('Reduced first line')).toHaveAttribute('data-state', 'active');
     expect(lyricLine('Reduced first line')).toHaveAttribute('aria-current', 'true');
     expect(lyricLine('Reduced second line')).toHaveAttribute('data-state', 'next');
@@ -1547,9 +1893,7 @@ describe('PlayerPage Tesla companion layout', () => {
 
     render(
       <LyricsStage
-        lines={[
-          { id: 'a', startMs: 10_000, text: 'Closing line' },
-        ]}
+        lines={[{ id: 'a', startMs: 10_000, text: 'Closing line' }]}
         elapsedMs={20_000}
         offsetMs={-500}
         playbackStatus="playing"

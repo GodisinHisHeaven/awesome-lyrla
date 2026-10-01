@@ -16,14 +16,15 @@ import {
   AppleTtmlProjectionParserV3,
   SupabaseAppleLyricsBackfillStore,
 } from './supabase-apple-lyrics-backfill.js';
-import {
-  SupabaseLyricsClient,
-  type AppleLyricsQueueStats,
-} from './supabase-lyrics-client.js';
+import { SupabaseLyricsClient, type AppleLyricsQueueStats } from './supabase-lyrics-client.js';
 import {
   productionObservability,
   type ProductionObservabilitySnapshot,
 } from './production-observability.js';
+
+// Maintenance queues are usually empty. Keep their idle cadence below the
+// production lease (300s), without slowing backfill or active maintenance work.
+const MAINTENANCE_POLL_INTERVAL_MS = 120_000;
 
 export interface AppleLyricsRuntimeStats {
   appleLyricsBackfill: AppleLyricsBackfillRunnerStats | { enabled: false };
@@ -55,7 +56,7 @@ class AppleLyricsQueueObservability {
     void this.poll();
     this.timer = setInterval(() => {
       void this.poll();
-    }, 60_000);
+    }, MAINTENANCE_POLL_INTERVAL_MS);
     this.timer.unref();
   }
 
@@ -91,9 +92,11 @@ export interface AppleLyricsRuntime {
   stats(): AppleLyricsRuntimeStats;
 }
 
-export function createAppleLyricsRuntime(options: {
-  onWedged?: (error: Error) => void;
-} = {}): AppleLyricsRuntime {
+export function createAppleLyricsRuntime(
+  options: {
+    onWedged?: (error: Error) => void;
+  } = {},
+): AppleLyricsRuntime {
   const coordinator = new AppleLyricsPollCoordinator();
   const queueClient = config.supabase.lyricsMode === 'off' ? undefined : supabaseClient();
   const queueObservability = queueClient
@@ -162,12 +165,9 @@ function supabaseClient(): SupabaseLyricsClient {
 }
 
 function workerId(prefix: string): string {
-  return [
-    prefix,
-    config.revision.slice(0, 12),
-    process.pid,
-    randomBytes(4).toString('hex'),
-  ].join('-');
+  return [prefix, config.revision.slice(0, 12), process.pid, randomBytes(4).toString('hex')].join(
+    '-',
+  );
 }
 
 function createBackfillRunner(options: RunnerOptions): AppleLyricsBackfillRunner | undefined {
@@ -180,24 +180,24 @@ function createBackfillRunner(options: RunnerOptions): AppleLyricsBackfillRunner
   const source = new AppleMusicLyricsSource({
     mediaUserToken: config.appleLyrics.mediaUserToken,
     requestTimeoutMs: config.appleLyrics.requestTimeoutMs,
-    fallbackStorefronts: [
-      config.appleMusic.storefront,
-      ...config.appleMusic.fallbackStorefronts,
-    ],
+    fallbackStorefronts: [config.appleMusic.storefront, ...config.appleMusic.fallbackStorefronts],
     ...(config.appleLyrics.webBearerToken
       ? { webBearerToken: config.appleLyrics.webBearerToken }
       : {}),
   });
-  const worker = new AppleLyricsBackfillWorker({
-    queue: persistence,
-    fetcher: source,
-    identityVerifier: new AppleMusicLyricsExactIdentityVerifier(),
-    parser: new AppleTtmlProjectionParserV3(),
-    sink: persistence,
-  }, {
-    concurrency: config.appleLyrics.concurrency,
-    retryPolicy: { maxAttempts: config.appleLyrics.maxAttempts },
-  });
+  const worker = new AppleLyricsBackfillWorker(
+    {
+      queue: persistence,
+      fetcher: source,
+      identityVerifier: new AppleMusicLyricsExactIdentityVerifier(),
+      parser: new AppleTtmlProjectionParserV3(),
+      sink: persistence,
+    },
+    {
+      concurrency: config.appleLyrics.concurrency,
+      retryPolicy: { maxAttempts: config.appleLyrics.maxAttempts },
+    },
+  );
   return new AppleLyricsBackfillRunner(
     worker,
     config.appleLyrics.pollIntervalMs,
@@ -215,13 +215,11 @@ function createReprojectionRunner(options: RunnerOptions): AppleLyricsBackfillRu
     leaseSeconds: config.appleLyrics.leaseSeconds,
     concurrency: config.appleLyrics.concurrency,
   });
-  // Poll below the lease duration so a restart cannot leave an expired job
-  // untouched for several minutes.
   return new AppleLyricsBackfillRunner(
     worker,
     1_000,
     'Apple lyrics reprojection',
-    60_000,
+    MAINTENANCE_POLL_INTERVAL_MS,
     options,
   );
 }
@@ -238,7 +236,7 @@ function createTimelineRepairRunner(options: RunnerOptions): AppleLyricsBackfill
     worker,
     1_000,
     'Apple lyrics timeline repair',
-    60_000,
+    MAINTENANCE_POLL_INTERVAL_MS,
     options,
   );
 }
