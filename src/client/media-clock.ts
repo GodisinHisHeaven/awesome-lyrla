@@ -39,6 +39,8 @@ export function rebaseMediaClock(
   if (
     clock.running !== running ||
     !running ||
+    // A reset to the track start is an explicit restart, even inside the jitter window.
+    (reportedElapsedMs === 0 && predictedElapsedMs > 0) ||
     driftMs > FORWARD_SEEK_THRESHOLD_MS ||
     driftMs < -BACKWARD_SEEK_THRESHOLD_MS
   ) {

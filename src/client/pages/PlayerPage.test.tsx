@@ -1687,7 +1687,7 @@ describe('PlayerPage Tesla companion layout', () => {
     vi.useRealTimers();
   });
 
-  it('honors a same-value telemetry revision as a hard backward seek', () => {
+  it.each([850, 1_850])('honors a restart revision after %i ms', (elapsed) => {
     vi.useFakeTimers();
     const lines = [
       { id: 'a', startMs: 0, text: 'Seek first line' },
@@ -1704,8 +1704,11 @@ describe('PlayerPage Tesla companion layout', () => {
       />,
     );
 
-    act(() => vi.advanceTimersByTime(1_850));
-    expect(lyricLine('Seek second line')).toHaveAttribute('data-state', 'active');
+    act(() => vi.advanceTimersByTime(elapsed));
+    expect(lyricLine('Seek second line')).toHaveAttribute(
+      'data-state',
+      elapsed < 1_000 ? 'incoming' : 'active',
+    );
     rerender(
       <LyricsStage
         lines={lines}

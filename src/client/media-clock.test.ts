@@ -58,10 +58,10 @@ describe('media clock correction', () => {
     expect(sampleMediaClock(seek, 2_000)).toBe(10_799);
   });
 
-  it('treats repeated elapsed values as new reports, smoothing small resets but honoring large ones', () => {
-    const clock = createMediaClock(0, true, 0);
-    expect(sampleMediaClock(rebaseMediaClock(clock, 0, true, 850), 850)).toBe(850);
-    expect(sampleMediaClock(rebaseMediaClock(clock, 0, true, 1_001), 1_001)).toBe(0);
+  it.each([350, 351, 850, 1_000, 1_001])('immediately restarts at zero after %i ms', (now) => {
+    const restarted = rebaseMediaClock(createMediaClock(0, true, 0), 0, true, now);
+    expect(sampleMediaClock(restarted, now)).toBe(0);
+    expect(sampleMediaClock(restarted, now + 100)).toBe(100);
   });
 
   it('preserves forward correction and immediate forward seek behavior', () => {
