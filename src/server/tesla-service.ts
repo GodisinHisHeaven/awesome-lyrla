@@ -70,6 +70,10 @@ export const PLAYER_TELEMETRY_FIELDS = {
     resend_interval_seconds: 30,
     minimum_delta: 1,
   },
+  // Location minimum_delta is in meters; resends keep a stationary map fresh.
+  Location: { interval_seconds: 5, resend_interval_seconds: 15, minimum_delta: 10 },
+  DestinationLocation: { interval_seconds: 15, resend_interval_seconds: 60 },
+  RouteLine: { interval_seconds: 15, resend_interval_seconds: 60 },
 } as const;
 
 export interface NormalizedTelemetryConfigureResponse {

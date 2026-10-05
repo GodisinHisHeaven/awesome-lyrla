@@ -62,6 +62,22 @@ describe('player telemetry configuration', () => {
       'vehicle_location',
     ]);
   });
+
+  it('resends coordinates before expiry and caps changing location telemetry to five seconds', () => {
+    expect(PLAYER_TELEMETRY_FIELDS.Location).toEqual({
+      interval_seconds: 5,
+      resend_interval_seconds: 15,
+      minimum_delta: 10,
+    });
+    expect(PLAYER_TELEMETRY_FIELDS.DestinationLocation).toEqual({
+      interval_seconds: 15,
+      resend_interval_seconds: 60,
+    });
+    expect(PLAYER_TELEMETRY_FIELDS.RouteLine).toEqual({
+      interval_seconds: 15,
+      resend_interval_seconds: 60,
+    });
+  });
 });
 
 describe('normalizeTelemetryConfigureResponse', () => {
