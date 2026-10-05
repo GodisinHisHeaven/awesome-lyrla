@@ -27,10 +27,7 @@ import {
   productionObservability,
   type ProductionObservability,
 } from './production-observability.js';
-import {
-  NavigationState,
-  type NavigationField,
-} from './navigation-state.js';
+import { NavigationState, type NavigationField } from './navigation-state.js';
 import type { StateStore } from './store.js';
 
 export { NAVIGATION_STALE_AFTER_MS } from './navigation-state.js';
@@ -40,11 +37,7 @@ type SerializedSnapshotListener = (snapshot: string) => void;
 type AppleBackfillMetadataField = 'title' | 'artist' | 'album' | 'durationMs';
 type AppleBackfillMetadataValue = string | number;
 type LyricsResolutionReason =
-  | 'metadata'
-  | 'metadata-enrichment'
-  | 'metadata-correction'
-  | 'retry'
-  | 'selection';
+  'metadata' | 'metadata-enrichment' | 'metadata-correction' | 'retry' | 'selection';
 
 interface LyricsMetadataEpoch {
   id: number;
@@ -179,10 +172,8 @@ function valueFromTelemetry(value: unknown): unknown {
 }
 
 function numericTelemetryValue(value: unknown): number | null {
-  if (
-    typeof value !== 'number'
-    && (typeof value !== 'string' || value.trim().length === 0)
-  ) return null;
+  if (typeof value !== 'number' && (typeof value !== 'string' || value.trim().length === 0))
+    return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -191,11 +182,12 @@ function invalidTelemetryValue(rawValue: unknown, value: unknown): boolean {
   if (typeof value === 'string' && value.trim().toLowerCase() === 'invalid') return true;
   return [rawValue, value].some((candidate) => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
-    return Object.entries(candidate as Record<string, unknown>).some(([key, entry]) =>
-      key.toLowerCase().includes('invalid')
-      && entry !== false
-      && entry !== null
-      && entry !== undefined,
+    return Object.entries(candidate as Record<string, unknown>).some(
+      ([key, entry]) =>
+        key.toLowerCase().includes('invalid') &&
+        entry !== false &&
+        entry !== null &&
+        entry !== undefined,
     );
   });
 }
@@ -209,11 +201,7 @@ function playbackStatus(value: unknown): PlaybackStatus {
 }
 
 function comparableTelemetryText(value: string): string {
-  return value
-    .normalize('NFKC')
-    .trim()
-    .toLocaleLowerCase('en-US')
-    .replace(/\s+/g, ' ');
+  return value.normalize('NFKC').trim().toLocaleLowerCase('en-US').replace(/\s+/g, ' ');
 }
 
 function appleBackfillValuesEqual(
@@ -227,14 +215,14 @@ function appleBackfillValuesEqual(
 
 function canObserveAppleBackfill(track: TrackMetadata | null): track is TrackMetadata {
   return Boolean(
-    track
-    && track.title.trim()
-    && track.artist.trim()
-    && track.album.trim()
-    && Number.isFinite(track.durationMs)
-    && track.durationMs > 0
-    && track.durationMs <= APPLE_BACKFILL_MAX_DURATION_MS
-    && track.durationMs !== APPLE_BACKFILL_RADIO_DURATION_MS,
+    track &&
+    track.title.trim() &&
+    track.artist.trim() &&
+    track.album.trim() &&
+    Number.isFinite(track.durationMs) &&
+    track.durationMs > 0 &&
+    track.durationMs <= APPLE_BACKFILL_MAX_DURATION_MS &&
+    track.durationMs !== APPLE_BACKFILL_RADIO_DURATION_MS,
   );
 }
 
@@ -244,10 +232,7 @@ function exactTrackIdentity(track: TrackMetadata | null): string {
 }
 
 function hasUsableLyrics(lyrics: LyricsPayload): boolean {
-  return (
-    (lyrics.kind === 'synced' || lyrics.kind === 'plain')
-    && lyrics.lines.length > 0
-  );
+  return (lyrics.kind === 'synced' || lyrics.kind === 'plain') && lyrics.lines.length > 0;
 }
 
 function lyricsTrackIdentityContradicts(
@@ -255,50 +240,50 @@ function lyricsTrackIdentityContradicts(
   candidate: TrackMetadata,
 ): boolean {
   if (
-    presented.title.trim()
-    && candidate.title.trim()
-    && comparableTelemetryText(presented.title)
-      !== comparableTelemetryText(candidate.title)
-  ) return true;
+    presented.title.trim() &&
+    candidate.title.trim() &&
+    comparableTelemetryText(presented.title) !== comparableTelemetryText(candidate.title)
+  )
+    return true;
   if (
-    presented.artist.trim()
-    && candidate.artist.trim()
-    && comparableTelemetryText(presented.artist)
-      !== comparableTelemetryText(candidate.artist)
-  ) return true;
+    presented.artist.trim() &&
+    candidate.artist.trim() &&
+    comparableTelemetryText(presented.artist) !== comparableTelemetryText(candidate.artist)
+  )
+    return true;
   return (
-    presented.durationMs > 0
-    && candidate.durationMs > 0
-    && Math.round(presented.durationMs / 2_000)
-      !== Math.round(candidate.durationMs / 2_000)
+    presented.durationMs > 0 &&
+    candidate.durationMs > 0 &&
+    Math.round(presented.durationMs / 2_000) !== Math.round(candidate.durationMs / 2_000)
   );
 }
 
 function lyricsMetadataSettleMs(track: TrackMetadata): number {
-  const waitingForAlbum = track.artist.trim().length > 0
-    && !track.album.trim()
-    && Number.isFinite(track.durationMs)
-    && track.durationMs > 0;
-  return waitingForAlbum
-    ? LYRICS_INCOMPLETE_METADATA_SETTLE_MS
-    : LYRICS_METADATA_DEBOUNCE_MS;
+  const waitingForAlbum =
+    track.artist.trim().length > 0 &&
+    !track.album.trim() &&
+    Number.isFinite(track.durationMs) &&
+    track.durationMs > 0;
+  return waitingForAlbum ? LYRICS_INCOMPLETE_METADATA_SETTLE_MS : LYRICS_METADATA_DEBOUNCE_MS;
 }
 
 function lyricsVersionDigest(lyrics: LyricsPayload): string | null {
   if (!hasUsableLyrics(lyrics)) return null;
-  return createHash('sha256').update(JSON.stringify({
-    kind: lyrics.kind,
-    provider: lyrics.provider,
-    providerId: lyrics.providerId,
-    fallbackKind: lyrics.fallbackKind,
-    lines: lyrics.lines.map((line) => [line.startMs, line.text]),
-  })).digest('hex').slice(0, 16);
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        kind: lyrics.kind,
+        provider: lyrics.provider,
+        providerId: lyrics.providerId,
+        fallbackKind: lyrics.fallbackKind,
+        lines: lyrics.lines.map((line) => [line.startMs, line.text]),
+      }),
+    )
+    .digest('hex')
+    .slice(0, 16);
 }
 
-function stableLyricsAfterRefresh(
-  current: LyricsPayload,
-  refreshed: LyricsPayload,
-): LyricsPayload {
+function stableLyricsAfterRefresh(current: LyricsPayload, refreshed: LyricsPayload): LyricsPayload {
   const stable = { ...current };
   if (refreshed.retryable) stable.retryable = true;
   else delete stable.retryable;
@@ -335,15 +320,9 @@ export class PlayerCoordinator {
   private activeFingerprint = config.demoMode ? trackFingerprint(DEMO_TRACK) : '';
   private lookupSequence = 0;
   private identityTimer?: NodeJS.Timeout;
-  private activeLyricsMetadata = config.demoMode
-    ? lyricsLookupFingerprint(DEMO_TRACK)
-    : '';
-  private activeLyricsTrack: TrackMetadata | null = config.demoMode
-    ? { ...DEMO_TRACK }
-    : null;
-  private presentedLyricsTrack: TrackMetadata | null = config.demoMode
-    ? { ...DEMO_TRACK }
-    : null;
+  private activeLyricsMetadata = config.demoMode ? lyricsLookupFingerprint(DEMO_TRACK) : '';
+  private activeLyricsTrack: TrackMetadata | null = config.demoMode ? { ...DEMO_TRACK } : null;
+  private presentedLyricsTrack: TrackMetadata | null = config.demoMode ? { ...DEMO_TRACK } : null;
   private pendingLyricsTrack?: TrackMetadata;
   private pendingLyricsMetadataEpochId?: number;
   private lyricsMetadataEpoch?: LyricsMetadataEpoch;
@@ -387,6 +366,7 @@ export class PlayerCoordinator {
   private artworkStalePaletteDeadlineMs = 0;
   private artworkMissingTitleTimer?: NodeJS.Timeout;
   private readonly navigationState: NavigationState;
+  private navigationVin: string | null = null;
   private telemetryPublishTimer?: NodeJS.Immediate;
   private demoTimer?: NodeJS.Timeout;
 
@@ -432,10 +412,7 @@ export class PlayerCoordinator {
       return !hasUsableLyrics(this.lyrics);
     }
     if (!this.track?.title.trim()) return false;
-    return !lyricsTrackIdentityContradicts(
-      this.presentedLyricsTrack,
-      this.track,
-    );
+    return !lyricsTrackIdentityContradicts(this.presentedLyricsTrack, this.track);
   }
 
   subscribe(listener: SnapshotListener): () => void {
@@ -531,11 +508,18 @@ export class PlayerCoordinator {
     const selectedVin = this.selectedVin();
     if (selectedVin && vin !== selectedVin) return;
     if (
-      field === 'DestinationName'
-      || field === 'MinutesToArrival'
-      || field === 'MilesToArrival'
-      || field === 'ExpectedEnergyPercentAtTripArrival'
+      field === 'DestinationName' ||
+      field === 'MinutesToArrival' ||
+      field === 'MilesToArrival' ||
+      field === 'ExpectedEnergyPercentAtTripArrival' ||
+      field === 'Location' ||
+      field === 'DestinationLocation' ||
+      field === 'RouteLine'
     ) {
+      if (this.navigationVin !== vin) {
+        this.navigationState.clear();
+        this.navigationVin = vin;
+      }
       this.ingestNavigation(field, rawValue);
       return;
     }
@@ -543,35 +527,28 @@ export class PlayerCoordinator {
     if (!mapped) return;
     const now = Date.now();
     const value = valueFromTelemetry(rawValue);
-    const numericValue = mapped === 'elapsedMs' || mapped === 'durationMs'
-      ? numericTelemetryValue(value)
-      : undefined;
-    if (
-      (mapped === 'elapsedMs' || mapped === 'durationMs')
-      && numericValue === null
-    ) return;
+    const numericValue =
+      mapped === 'elapsedMs' || mapped === 'durationMs' ? numericTelemetryValue(value) : undefined;
+    if ((mapped === 'elapsedMs' || mapped === 'durationMs') && numericValue === null) return;
     const appleBackfillField = APPLE_BACKFILL_METADATA_FIELDS.includes(
       mapped as AppleBackfillMetadataField,
     )
-      ? mapped as AppleBackfillMetadataField
+      ? (mapped as AppleBackfillMetadataField)
       : null;
-    const nextDuration = appleBackfillField === 'durationMs' ? numericValue ?? null : null;
-    const validAppleBackfillField = appleBackfillField !== 'durationMs'
-      || Number.isFinite(nextDuration);
-    const appleBackfillFieldChanged = appleBackfillField === 'durationMs'
-      ? validAppleBackfillField && nextDuration !== this.track?.durationMs
-      : appleBackfillField !== null
-        && comparableTelemetryText(this.track?.[appleBackfillField] as string ?? '')
-          !== comparableTelemetryText(String(value ?? ''));
-    const previousExactIdentity = appleBackfillField
-      ? exactTrackIdentity(this.track)
-      : '';
-    const previousAlbumIdentity = appleBackfillField === 'album'
-      ? comparableTelemetryText(this.track?.album ?? '')
-      : '';
-    const previousClockElapsed = appleBackfillField && this.playbackClockReady
-      ? this.currentElapsedMs(now)
-      : null;
+    const nextDuration = appleBackfillField === 'durationMs' ? (numericValue ?? null) : null;
+    const validAppleBackfillField =
+      appleBackfillField !== 'durationMs' || Number.isFinite(nextDuration);
+    const appleBackfillFieldChanged =
+      appleBackfillField === 'durationMs'
+        ? validAppleBackfillField && nextDuration !== this.track?.durationMs
+        : appleBackfillField !== null &&
+          comparableTelemetryText((this.track?.[appleBackfillField] as string) ?? '') !==
+            comparableTelemetryText(String(value ?? ''));
+    const previousExactIdentity = appleBackfillField ? exactTrackIdentity(this.track) : '';
+    const previousAlbumIdentity =
+      appleBackfillField === 'album' ? comparableTelemetryText(this.track?.album ?? '') : '';
+    const previousClockElapsed =
+      appleBackfillField && this.playbackClockReady ? this.currentElapsedMs(now) : null;
     const previousClockPlaying = this.status === 'playing';
 
     if (mapped === 'elapsedMs') {
@@ -592,8 +569,8 @@ export class PlayerCoordinator {
     if (appleBackfillField) {
       const nextExactIdentity = exactTrackIdentity(this.track);
       if (nextExactIdentity !== previousExactIdentity) {
-        const invalidatesPlaybackClock = appleBackfillField !== 'album'
-          || Boolean(previousAlbumIdentity);
+        const invalidatesPlaybackClock =
+          appleBackfillField !== 'album' || Boolean(previousAlbumIdentity);
         this.advanceTrackGeneration({
           invalidatesPlaybackClock,
           now,
@@ -605,41 +582,48 @@ export class PlayerCoordinator {
 
     this.connection = 'connected';
     if (appleBackfillField) {
-      this.scheduleLyricsMetadataResolution(
-        appleBackfillField,
-        appleBackfillFieldChanged,
-      );
+      this.scheduleLyricsMetadataResolution(appleBackfillField, appleBackfillFieldChanged);
     }
     if (appleBackfillField) {
       if (validAppleBackfillField) {
-        const metadataValue = appleBackfillField === 'durationMs'
-          ? Number(value)
-          : String(value ?? '');
+        const metadataValue =
+          appleBackfillField === 'durationMs' ? Number(value) : String(value ?? '');
         this.ingestAppleBackfillMetadata(appleBackfillField, metadataValue);
       }
-      this.scheduleArtworkResolution(
-        appleBackfillField,
-        appleBackfillFieldChanged,
-      );
+      this.scheduleArtworkResolution(appleBackfillField, appleBackfillFieldChanged);
     }
     this.scheduleTelemetryPublish();
   }
 
   private navigationSnapshot(now = Date.now()) {
+    if (this.navigationVin !== null && this.navigationVin !== this.selectedVin()) {
+      this.navigationState.clear();
+      this.navigationVin = null;
+    }
     return this.navigationState.snapshot(now);
   }
 
-  private ingestNavigation(
-    field: NavigationField,
-    rawValue: unknown,
-  ): void {
+  private ingestNavigation(field: NavigationField, rawValue: unknown): void {
     const now = Date.now();
     const wasConnected = this.connection === 'connected';
-    const value = valueFromTelemetry(rawValue);
+    let value = rawValue;
+    let invalid = false;
+    for (let depth = 0; depth < 4; depth++) {
+      invalid ||= invalidTelemetryValue(value, value);
+      const next = valueFromTelemetry(value);
+      if (next !== value) {
+        value = next;
+        continue;
+      }
+      if (value && typeof value === 'object' && 'locationValue' in value) {
+        value = (value as { locationValue: unknown }).locationValue;
+      }
+      break;
+    }
     const update = this.navigationState.ingest(
       field,
-      typeof value === 'string' || typeof value === 'number' ? value : null,
-      invalidTelemetryValue(rawValue, value),
+      value,
+      invalid || invalidTelemetryValue(rawValue, value),
       now,
     );
     if (!update.accepted) return;
@@ -685,23 +669,22 @@ export class PlayerCoordinator {
         playing: previousClockPlaying,
         trusted: this.playbackClockEvidenceCount >= 2,
       };
-      const preservesTransitionRoots = this.previousPlaybackClocks.length > 0
-        && now - this.lastPlaybackClockInvalidationAtMs
-          <= PLAYBACK_CLOCK_TRANSITION_GRACE_MS;
+      const preservesTransitionRoots =
+        this.previousPlaybackClocks.length > 0 &&
+        now - this.lastPlaybackClockInvalidationAtMs <= PLAYBACK_CLOCK_TRANSITION_GRACE_MS;
       if (!preservesTransitionRoots) {
         this.previousPlaybackClocks = [previousClock];
       } else {
         const duplicatesExistingRoot = this.previousPlaybackClocks.some((candidate) => {
-          const predictedElapsed = candidate.elapsedMs
-            + (candidate.playing ? now - candidate.capturedAtMs : 0);
-          return Math.abs(predictedElapsed - previousClockElapsed)
-            <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS;
+          const predictedElapsed =
+            candidate.elapsedMs + (candidate.playing ? now - candidate.capturedAtMs : 0);
+          return (
+            Math.abs(predictedElapsed - previousClockElapsed) <=
+            PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS
+          );
         });
         if (!duplicatesExistingRoot) {
-          this.previousPlaybackClocks = [
-            ...this.previousPlaybackClocks,
-            previousClock,
-          ].slice(-4);
+          this.previousPlaybackClocks = [...this.previousPlaybackClocks, previousClock].slice(-4);
         }
       }
       this.elapsedMs = previousClockElapsed;
@@ -715,21 +698,20 @@ export class PlayerCoordinator {
   private ingestPlaybackElapsed(elapsedMs: number, now: number): void {
     if (this.playbackClockReady) {
       const previousClocks = this.previousPlaybackClocks;
-      const withinTransitionGrace = previousClocks.length > 0
-        && now - this.lastPlaybackClockInvalidationAtMs
-          <= PLAYBACK_CLOCK_TRANSITION_GRACE_MS;
+      const withinTransitionGrace =
+        previousClocks.length > 0 &&
+        now - this.lastPlaybackClockInvalidationAtMs <= PLAYBACK_CLOCK_TRANSITION_GRACE_MS;
       if (withinTransitionGrace) {
         const currentElapsed = this.currentElapsedMs(now);
         const matchesPreviousClock = previousClocks.some((previousClock) => {
-          const previousElapsed = previousClock.elapsedMs
-            + (previousClock.playing ? now - previousClock.capturedAtMs : 0);
-          return Math.abs(elapsedMs - previousElapsed)
-            <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS;
+          const previousElapsed =
+            previousClock.elapsedMs +
+            (previousClock.playing ? now - previousClock.capturedAtMs : 0);
+          return Math.abs(elapsedMs - previousElapsed) <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS;
         });
         if (
-          matchesPreviousClock
-          && Math.abs(elapsedMs - currentElapsed)
-            > PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS
+          matchesPreviousClock &&
+          Math.abs(elapsedMs - currentElapsed) > PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS
         ) {
           // A reset from B can arrive before an older in-flight A sample.
           // Retaining the transition root lets us reject that reverse order
@@ -743,28 +725,26 @@ export class PlayerCoordinator {
       if (deltaMs <= -250) {
         this.clockObservability.observeBackwardSample({
           deltaMs,
-          decision: (
-            this.status === 'paused'
-            || this.status === 'stopped'
-            || Math.abs(deltaMs) <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS
-          ) ? 'accepted' : 'pending',
+          decision:
+            this.status === 'paused' ||
+            this.status === 'stopped' ||
+            Math.abs(deltaMs) <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS
+              ? 'accepted'
+              : 'pending',
           playbackStatus: this.status,
           trackGeneration: this.trackGeneration,
         });
       }
-      if (
-        Math.abs(deltaMs)
-          > PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS
-      ) {
+      if (Math.abs(deltaMs) > PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS) {
         if (this.status === 'paused' || this.status === 'stopped') {
           this.acceptPlaybackClock(elapsedMs, now);
           return;
         }
         const pending = this.pendingPlaybackClockSample;
         if (
-          pending
-          && pending.generation === this.trackGeneration
-          && this.playbackClockSamplesAreContinuous(pending, elapsedMs, now)
+          pending &&
+          pending.generation === this.trackGeneration &&
+          this.playbackClockSamplesAreContinuous(pending, elapsedMs, now)
         ) {
           this.acceptPlaybackClock(elapsedMs, now, 2);
           return;
@@ -778,18 +758,14 @@ export class PlayerCoordinator {
       }
       this.pendingPlaybackClockSample = undefined;
       if (
-        previousClocks.length > 0
-        && now - this.lastPlaybackClockInvalidationAtMs
-          > PLAYBACK_CLOCK_TRANSITION_GRACE_MS
+        previousClocks.length > 0 &&
+        now - this.lastPlaybackClockInvalidationAtMs > PLAYBACK_CLOCK_TRANSITION_GRACE_MS
       ) {
         this.previousPlaybackClocks = [];
       }
       this.elapsedMs = elapsedMs;
       this.capturedAtMs = now;
-      this.playbackClockEvidenceCount = Math.min(
-        2,
-        this.playbackClockEvidenceCount + 1,
-      );
+      this.playbackClockEvidenceCount = Math.min(2, this.playbackClockEvidenceCount + 1);
       return;
     }
 
@@ -817,10 +793,7 @@ export class PlayerCoordinator {
       this.acceptPlaybackClock(elapsedMs, now);
       return;
     }
-    if (
-      now - this.lastPlaybackClockInvalidationAtMs
-        >= PLAYBACK_CLOCK_TRANSITION_GRACE_MS
-    ) {
+    if (now - this.lastPlaybackClockInvalidationAtMs >= PLAYBACK_CLOCK_TRANSITION_GRACE_MS) {
       // MQTT supplies no cross-topic packet id. Once the reorder window has
       // elapsed, require two continuous samples to regain liveness without
       // allowing one stale packet to move the clock.
@@ -834,23 +807,26 @@ export class PlayerCoordinator {
     }
 
     const previousClockPositions = previousClocks.map((previousClock) => ({
-      elapsedMs: previousClock.elapsedMs
-        + (previousClock.playing ? now - previousClock.capturedAtMs : 0),
+      elapsedMs:
+        previousClock.elapsedMs + (previousClock.playing ? now - previousClock.capturedAtMs : 0),
       trusted: previousClock.trusted,
     }));
-    const matchesPreviousClock = previousClockPositions.some((previousClock) =>
-      Math.abs(elapsedMs - previousClock.elapsedMs)
-        <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS);
+    const matchesPreviousClock = previousClockPositions.some(
+      (previousClock) =>
+        Math.abs(elapsedMs - previousClock.elapsedMs) <= PREVIOUS_CLOCK_TRAJECTORY_TOLERANCE_MS,
+    );
     if (matchesPreviousClock) {
       // This can still be a late sample from a previous song. Do not let it
       // become evidence for the new generation.
       this.pendingPlaybackClockSample = undefined;
       return;
     }
-    const isStrongReset = previousClockPositions.some((previousClock) =>
-      previousClock.trusted
-      && previousClock.elapsedMs - elapsedMs >= PLAYBACK_CLOCK_STRONG_RESET_MS)
-      && elapsedMs <= PLAYBACK_CLOCK_NEW_TRACK_START_MAX_MS;
+    const isStrongReset =
+      previousClockPositions.some(
+        (previousClock) =>
+          previousClock.trusted &&
+          previousClock.elapsedMs - elapsedMs >= PLAYBACK_CLOCK_STRONG_RESET_MS,
+      ) && elapsedMs <= PLAYBACK_CLOCK_NEW_TRACK_START_MAX_MS;
     if (isStrongReset) {
       this.acceptPlaybackClock(elapsedMs, now);
       return;
@@ -858,9 +834,9 @@ export class PlayerCoordinator {
 
     const pending = this.pendingPlaybackClockSample;
     if (
-      pending
-      && pending.generation === this.trackGeneration
-      && this.playbackClockSamplesAreContinuous(pending, elapsedMs, now)
+      pending &&
+      pending.generation === this.trackGeneration &&
+      this.playbackClockSamplesAreContinuous(pending, elapsedMs, now)
     ) {
       this.acceptPlaybackClock(elapsedMs, now, 2);
       return;
@@ -880,20 +856,15 @@ export class PlayerCoordinator {
     const wallAdvanceMs = Math.max(0, now - previous.capturedAtMs);
     const mediaAdvanceMs = elapsedMs - previous.elapsedMs;
     if (mediaAdvanceMs < -PLAYBACK_CLOCK_CONTINUITY_TOLERANCE_MS) return false;
-    const playingContinuity = Math.abs(mediaAdvanceMs - wallAdvanceMs)
-      <= PLAYBACK_CLOCK_CONTINUITY_TOLERANCE_MS;
-    const staticContinuity = Math.abs(mediaAdvanceMs)
-      <= PLAYBACK_CLOCK_CONTINUITY_TOLERANCE_MS;
+    const playingContinuity =
+      Math.abs(mediaAdvanceMs - wallAdvanceMs) <= PLAYBACK_CLOCK_CONTINUITY_TOLERANCE_MS;
+    const staticContinuity = Math.abs(mediaAdvanceMs) <= PLAYBACK_CLOCK_CONTINUITY_TOLERANCE_MS;
     if (this.status === 'playing') return playingContinuity;
     if (this.status === 'paused' || this.status === 'stopped') return staticContinuity;
     return playingContinuity || staticContinuity;
   }
 
-  private acceptPlaybackClock(
-    elapsedMs: number,
-    now: number,
-    evidenceCount = 1,
-  ): void {
+  private acceptPlaybackClock(elapsedMs: number, now: number, evidenceCount = 1): void {
     this.elapsedMs = elapsedMs;
     this.capturedAtMs = now;
     this.playbackClockReady = true;
@@ -920,22 +891,19 @@ export class PlayerCoordinator {
 
     let epoch = this.lyricsMetadataEpoch;
     const epochHasReplacementTitle = Boolean(
-      epoch
-      && epoch.observedFields.has('title')
-      && this.presentedLyricsTrack
-      && comparableTelemetryText(String(epoch.values.get('title') ?? ''))
-        !== comparableTelemetryText(this.presentedLyricsTrack.title),
+      epoch &&
+      epoch.observedFields.has('title') &&
+      this.presentedLyricsTrack &&
+      comparableTelemetryText(String(epoch.values.get('title') ?? '')) !==
+        comparableTelemetryText(this.presentedLyricsTrack.title),
     );
     const startsFreshEpoch = !epoch
       ? fieldChanged
-      : fieldChanged
-        && epoch.observedFields.has(field)
-        && (field === 'title' || !epochHasReplacementTitle);
+      : fieldChanged &&
+        epoch.observedFields.has(field) &&
+        (field === 'title' || !epochHasReplacementTitle);
     if (startsFreshEpoch) {
-      const values = new Map<
-        AppleBackfillMetadataField,
-        AppleBackfillMetadataValue
-      >();
+      const values = new Map<AppleBackfillMetadataField, AppleBackfillMetadataValue>();
       const inheritedTrack = this.presentedLyricsTrack ?? this.activeLyricsTrack;
       if (field !== 'title' && inheritedTrack?.title.trim()) {
         for (const metadataField of APPLE_BACKFILL_METADATA_FIELDS) {
@@ -948,30 +916,27 @@ export class PlayerCoordinator {
         values,
         observedFields: new Set(),
         backgroundRefresh: hasUsableLyrics(this.lyrics),
-        reason: hasUsableLyrics(this.lyrics)
-          ? 'metadata-enrichment'
-          : 'metadata-correction',
+        reason: hasUsableLyrics(this.lyrics) ? 'metadata-enrichment' : 'metadata-correction',
       };
       this.lyricsMetadataEpoch = epoch;
     }
     if (!epoch) return;
 
-    const value = field === 'durationMs'
-      ? currentTrack.durationMs
-      : currentTrack[field];
+    const value = field === 'durationMs' ? currentTrack.durationMs : currentTrack[field];
     epoch.values.set(field, value);
-    const validValue = field === 'durationMs'
-      ? Number.isFinite(value) && Number(value) > 0
-      : String(value).trim().length > 0;
+    const validValue =
+      field === 'durationMs'
+        ? Number.isFinite(value) && Number(value) > 0
+        : String(value).trim().length > 0;
     if (validValue) epoch.observedFields.add(field);
     else epoch.observedFields.delete(field);
 
     const candidateTitle = String(epoch.values.get('title') ?? '');
     if (
-      candidateTitle.trim()
-      && this.presentedLyricsTrack
-      && comparableTelemetryText(candidateTitle)
-        !== comparableTelemetryText(this.presentedLyricsTrack.title)
+      candidateTitle.trim() &&
+      this.presentedLyricsTrack &&
+      comparableTelemetryText(candidateTitle) !==
+        comparableTelemetryText(this.presentedLyricsTrack.title)
     ) {
       epoch.backgroundRefresh = false;
       epoch.reason = 'metadata';
@@ -991,23 +956,19 @@ export class PlayerCoordinator {
       source: currentTrack.source,
     };
     if (
-      this.presentedLyricsTrack
-      && lyricsTrackIdentityContradicts(
-        this.presentedLyricsTrack,
-        requestedTrack,
-      )
+      this.presentedLyricsTrack &&
+      lyricsTrackIdentityContradicts(this.presentedLyricsTrack, requestedTrack)
     ) {
       epoch.backgroundRefresh = false;
       epoch.reason = 'metadata';
     }
-    const completeMetadata = APPLE_BACKFILL_METADATA_FIELDS.every(
-      (metadataField) => epoch.observedFields.has(metadataField),
+    const completeMetadata = APPLE_BACKFILL_METADATA_FIELDS.every((metadataField) =>
+      epoch.observedFields.has(metadataField),
     );
-    const completedAsOneBurst = completeMetadata
-      && Date.now() - epoch.startedAtMs <= LYRICS_METADATA_BURST_WINDOW_MS;
+    const completedAsOneBurst =
+      completeMetadata && Date.now() - epoch.startedAtMs <= LYRICS_METADATA_BURST_WINDOW_MS;
     this.scheduleLyricsResolution({
-      bypassLocalCache:
-        epoch.backgroundRefresh || epoch.reason === 'metadata-correction',
+      bypassLocalCache: epoch.backgroundRefresh || epoch.reason === 'metadata-correction',
       resetRetry: fieldChanged,
       backgroundRefresh: epoch.backgroundRefresh,
       reason: epoch.reason,
@@ -1019,9 +980,7 @@ export class PlayerCoordinator {
     });
   }
 
-  private scheduleLyricsResolution(
-    options: LyricsResolutionOptions = {},
-  ): void {
+  private scheduleLyricsResolution(options: LyricsResolutionOptions = {}): void {
     const requestedTrack = options.requestedTrack ?? this.track;
     if (!requestedTrack?.title.trim()) {
       this.lookupSequence += 1;
@@ -1052,10 +1011,7 @@ export class PlayerCoordinator {
     const metadataFingerprint = lyricsLookupFingerprint(requestedTrack);
     if (fingerprint !== this.activeFingerprint) this.clearLyricRetry(true);
     else if (options.resetRetry) this.clearLyricRetry(true);
-    if (
-      metadataFingerprint === this.activeLyricsMetadata
-      && !options.bypassLocalCache
-    ) {
+    if (metadataFingerprint === this.activeLyricsMetadata && !options.bypassLocalCache) {
       if (this.lyricsMetadataEpoch?.id === options.metadataEpochId) {
         this.lyricsMetadataEpoch = undefined;
       }
@@ -1086,9 +1042,7 @@ export class PlayerCoordinator {
     const bypassLocalCache = this.bypassLyricsCache;
     const backgroundRefresh = this.backgroundLyricsRefresh;
     const resolutionReason = this.lyricsResolutionReason;
-    const requestedTrack = this.pendingLyricsTrack
-      ?? this.activeLyricsTrack
-      ?? this.track;
+    const requestedTrack = this.pendingLyricsTrack ?? this.activeLyricsTrack ?? this.track;
     const metadataEpochId = this.pendingLyricsMetadataEpochId;
     this.pendingLyricsTrack = undefined;
     this.pendingLyricsMetadataEpochId = undefined;
@@ -1116,10 +1070,7 @@ export class PlayerCoordinator {
       this.publish();
       return;
     }
-    if (
-      requestedMetadata === this.activeLyricsMetadata
-      && !bypassLocalCache
-    ) return;
+    if (requestedMetadata === this.activeLyricsMetadata && !bypassLocalCache) return;
     this.activeFingerprint = fingerprint;
     this.activeLyricsMetadata = requestedMetadata;
     this.activeLyricsTrack = { ...requestedTrack };
@@ -1193,15 +1144,16 @@ export class PlayerCoordinator {
           return;
         }
         const notice = '歌词查询没有完成，请稍后切歌或刷新重试。';
-        this.lyrics = backgroundRefresh && hasUsableLyrics(lyricsBeforeLookup)
-          ? { ...lyricsBeforeLookup, notice, retryable: true }
-          : {
-              kind: 'missing',
-              lines: [],
-              provider: null,
-              notice,
-              retryable: true,
-            };
+        this.lyrics =
+          backgroundRefresh && hasUsableLyrics(lyricsBeforeLookup)
+            ? { ...lyricsBeforeLookup, notice, retryable: true }
+            : {
+                kind: 'missing',
+                lines: [],
+                provider: null,
+                notice,
+                retryable: true,
+              };
         if (!backgroundRefresh) {
           this.presentedLyricsTrack = { ...requestedTrack };
         }
@@ -1217,10 +1169,7 @@ export class PlayerCoordinator {
     this.lyricRetryAttempt += 1;
     this.lyricRetryTimer = setTimeout(() => {
       this.lyricRetryTimer = undefined;
-      if (
-        this.activeFingerprint !== fingerprint ||
-        !this.lyrics.retryable
-      ) return;
+      if (this.activeFingerprint !== fingerprint || !this.lyrics.retryable) return;
       this.bypassLyricsCache = true;
       this.backgroundLyricsRefresh = true;
       this.lyricsResolutionReason = 'retry';
@@ -1245,15 +1194,8 @@ export class PlayerCoordinator {
     if (!config.isProduction) return;
     const currentDigest = lyricsVersionDigest(current);
     const refreshedDigest = lyricsVersionDigest(refreshed);
-    if (
-      !refreshedDigest
-      || (action === 'pinned' && currentDigest === refreshedDigest)
-    ) return;
-    this.observability.observeLyricsVersionTransition(
-      action,
-      current.provider,
-      refreshed.provider,
-    );
+    if (!refreshedDigest || (action === 'pinned' && currentDigest === refreshedDigest)) return;
+    this.observability.observeLyricsVersionTransition(action, current.provider, refreshed.provider);
     this.observability.logLyricsVersionTransition({
       event: 'lyrics_version_transition',
       action,
@@ -1289,19 +1231,13 @@ export class PlayerCoordinator {
     }
 
     const stableTrack = this.stableAppleBackfillTrack;
-    if (
-      stableTrack
-      && appleBackfillValuesEqual(field, stableTrack[field], value)
-    ) {
+    if (stableTrack && appleBackfillValuesEqual(field, stableTrack[field], value)) {
       const now = Date.now();
       this.stableAppleBackfillReplayAt.set(field, now);
-      const completedStableReplay = APPLE_BACKFILL_METADATA_FIELDS.every(
-        (candidateField) => {
-          const replayAt = this.stableAppleBackfillReplayAt.get(candidateField);
-          return replayAt !== undefined
-            && now - replayAt <= APPLE_BACKFILL_EPOCH_MAX_AGE_MS;
-        },
-      );
+      const completedStableReplay = APPLE_BACKFILL_METADATA_FIELDS.every((candidateField) => {
+        const replayAt = this.stableAppleBackfillReplayAt.get(candidateField);
+        return replayAt !== undefined && now - replayAt <= APPLE_BACKFILL_EPOCH_MAX_AGE_MS;
+      });
       if (completedStableReplay) this.stableAppleBackfillReplayAt.clear();
       return;
     }
@@ -1320,8 +1256,7 @@ export class PlayerCoordinator {
     const values = new Map<AppleBackfillMetadataField, AppleBackfillMetadataValue>();
     const stableTrack = this.stableAppleBackfillTrack;
     const fieldMatchesStable = Boolean(
-      stableTrack
-      && appleBackfillValuesEqual(field, stableTrack[field], value),
+      stableTrack && appleBackfillValuesEqual(field, stableTrack[field], value),
     );
     if (fieldMatchesStable) {
       stableReplayFields.add(field);
@@ -1329,10 +1264,7 @@ export class PlayerCoordinator {
       for (const candidateField of APPLE_BACKFILL_METADATA_FIELDS) {
         if (candidateField === field) continue;
         const replayAt = this.stableAppleBackfillReplayAt.get(candidateField);
-        if (
-          replayAt !== undefined
-          && now - replayAt <= APPLE_BACKFILL_EPOCH_MAX_AGE_MS
-        ) {
+        if (replayAt !== undefined && now - replayAt <= APPLE_BACKFILL_EPOCH_MAX_AGE_MS) {
           // This can be a partial previous-track resend immediately before the
           // identity change. Inherit it for liveness, but give replacement
           // fields one extra second to arrive before enqueueing the candidate.
@@ -1362,10 +1294,7 @@ export class PlayerCoordinator {
     value: AppleBackfillMetadataValue,
   ): void {
     const existing = epoch.values.get(field);
-    if (
-      existing !== undefined
-      && !appleBackfillValuesEqual(field, existing, value)
-    ) {
+    if (existing !== undefined && !appleBackfillValuesEqual(field, existing, value)) {
       if (epoch.inheritedFields.has(field)) {
         epoch.values.set(field, value);
         epoch.inheritedFields.delete(field);
@@ -1389,9 +1318,9 @@ export class PlayerCoordinator {
     epoch.values.set(field, value);
     const stableTrack = this.stableAppleBackfillTrack;
     if (
-      (existing === undefined || wasInherited)
-      && stableTrack
-      && appleBackfillValuesEqual(field, stableTrack[field], value)
+      (existing === undefined || wasInherited) &&
+      stableTrack &&
+      appleBackfillValuesEqual(field, stableTrack[field], value)
     ) {
       // A direct value equal to the last verified track can be its delayed
       // 30-second resend. Even when we optimistically inherited that value,
@@ -1404,9 +1333,7 @@ export class PlayerCoordinator {
   }
 
   private tryArmAppleBackfillObservation(epoch: AppleBackfillMetadataEpoch): void {
-    if (
-      APPLE_BACKFILL_METADATA_FIELDS.some((field) => !epoch.values.has(field))
-    ) {
+    if (APPLE_BACKFILL_METADATA_FIELDS.some((field) => !epoch.values.has(field))) {
       if (this.pendingAppleBackfillObservation?.epochId === epoch.id) {
         this.cancelPendingAppleBackfillObservation();
       }
@@ -1487,10 +1414,11 @@ export class PlayerCoordinator {
   private commitPendingAppleBackfillObservation(fingerprint: string): void {
     const pending = this.pendingAppleBackfillObservation;
     if (
-      !pending
-      || pending.fingerprint !== fingerprint
-      || this.appleBackfillEpoch?.id !== pending.epochId
-    ) return;
+      !pending ||
+      pending.fingerprint !== fingerprint ||
+      this.appleBackfillEpoch?.id !== pending.epochId
+    )
+      return;
 
     if (this.appleBackfillTimer) clearTimeout(this.appleBackfillTimer);
     this.appleBackfillTimer = undefined;
@@ -1531,30 +1459,17 @@ export class PlayerCoordinator {
     fieldChanged: boolean,
   ): void {
     const trackHasTitle = Boolean(this.track?.title.trim());
-    const fingerprint = trackHasTitle && this.track
-      ? artworkFingerprint(this.track)
-      : '';
+    const fingerprint = trackHasTitle && this.track ? artworkFingerprint(this.track) : '';
     if (fingerprint && fingerprint !== this.activeArtworkFingerprint) {
-      if (
-        this.artworkDeliveryStartedAtMs <= 0
-        || (field === 'title' && fieldChanged)
-      ) {
+      if (this.artworkDeliveryStartedAtMs <= 0 || (field === 'title' && fieldChanged)) {
         this.artworkDeliveryStartedAtMs = performance.now();
         this.artworkResolutionRecorded = false;
       }
       this.artworkDeliveryFingerprint = fingerprint;
     }
     if (trackHasTitle) this.clearMissingTitleArtworkTimer();
-    if (
-      fingerprint
-      && fingerprint === this.activeArtworkFingerprint
-      && this.artworkPalette
-    ) {
-      if (
-        this.pendingArtworkFingerprint
-        || this.artworkTimer
-        || this.artworkMetadataEpochOpen
-      ) {
+    if (fingerprint && fingerprint === this.activeArtworkFingerprint && this.artworkPalette) {
+      if (this.pendingArtworkFingerprint || this.artworkTimer || this.artworkMetadataEpochOpen) {
         this.cancelActiveArtworkLookup();
         this.artworkLookupSequence += 1;
         this.pendingArtworkFingerprint = '';
@@ -1569,35 +1484,26 @@ export class PlayerCoordinator {
       return;
     }
     const currentFingerprintIsSettled = Boolean(
-      fingerprint
-      && fingerprint === this.activeArtworkFingerprint
-      && !this.pendingArtworkFingerprint
-      && this.artworkRetryFingerprint !== fingerprint,
+      fingerprint &&
+      fingerprint === this.activeArtworkFingerprint &&
+      !this.pendingArtworkFingerprint &&
+      this.artworkRetryFingerprint !== fingerprint,
     );
     if (currentFingerprintIsSettled) return;
-    if (
-      fingerprint
-      && fingerprint === this.pendingArtworkFingerprint
-      && !this.artworkTimer
-    ) return;
+    if (fingerprint && fingerprint === this.pendingArtworkFingerprint && !this.artworkTimer) return;
 
-    const startsFreshEpoch = !this.artworkMetadataEpochOpen
-      || (
-        field === 'title'
-        && fieldChanged
-        && this.artworkMetadataObservedFields.has('title')
-      );
+    const startsFreshEpoch =
+      !this.artworkMetadataEpochOpen ||
+      (field === 'title' && fieldChanged && this.artworkMetadataObservedFields.has('title'));
     if (startsFreshEpoch) {
       this.artworkMetadataEpochOpen = true;
       this.artworkMetadataObservedFields.clear();
     }
     if (
-      this.track
-      && (
-        field === 'durationMs'
-          ? Number.isFinite(this.track.durationMs) && this.track.durationMs > 0
-          : this.track[field].trim().length > 0
-      )
+      this.track &&
+      (field === 'durationMs'
+        ? Number.isFinite(this.track.durationMs) && this.track.durationMs > 0
+        : this.track[field].trim().length > 0)
     ) {
       this.artworkMetadataObservedFields.add(field);
     }
@@ -1631,14 +1537,12 @@ export class PlayerCoordinator {
     this.artworkLookup = { state: 'loading' };
     if (!this.artworkPalette) this.artworkPalette = fallbackArtworkPalette(this.track);
     if (this.artworkTimer) clearTimeout(this.artworkTimer);
-    const completeMetadata = APPLE_BACKFILL_METADATA_FIELDS.every(
-      (metadataField) => this.artworkMetadataObservedFields.has(metadataField),
+    const completeMetadata = APPLE_BACKFILL_METADATA_FIELDS.every((metadataField) =>
+      this.artworkMetadataObservedFields.has(metadataField),
     );
     this.artworkTimer = setTimeout(
       () => this.maybeResolveArtwork(),
-      completeMetadata
-        ? ARTWORK_METADATA_DEBOUNCE_MS
-        : ARTWORK_INCOMPLETE_METADATA_SETTLE_MS,
+      completeMetadata ? ARTWORK_METADATA_DEBOUNCE_MS : ARTWORK_INCOMPLETE_METADATA_SETTLE_MS,
     );
     this.artworkTimer.unref();
     if (completeMetadata) {
@@ -1646,17 +1550,12 @@ export class PlayerCoordinator {
     }
   }
 
-  private startArtworkCacheProbe(
-    requestedTrack: TrackMetadata,
-    fingerprint: string,
-  ): void {
+  private startArtworkCacheProbe(requestedTrack: TrackMetadata, fingerprint: string): void {
     if (
-      typeof this.artworkPaletteService.resolveCached !== 'function'
-      || (
-        this.artworkCacheProbeFingerprint === fingerprint
-        && this.artworkCacheProbeAbortController
-      )
-    ) return;
+      typeof this.artworkPaletteService.resolveCached !== 'function' ||
+      (this.artworkCacheProbeFingerprint === fingerprint && this.artworkCacheProbeAbortController)
+    )
+      return;
 
     this.cancelArtworkCacheProbe();
     const sequence = this.artworkLookupSequence;
@@ -1684,13 +1583,14 @@ export class PlayerCoordinator {
     ])
       .then(([result]) => {
         if (
-          !result
-          || abortController.signal.aborted
-          || sequence !== this.artworkLookupSequence
-          || fingerprint !== this.pendingArtworkFingerprint
-          || !this.track?.title
-          || artworkFingerprint(this.track) !== fingerprint
-        ) return;
+          !result ||
+          abortController.signal.aborted ||
+          sequence !== this.artworkLookupSequence ||
+          fingerprint !== this.pendingArtworkFingerprint ||
+          !this.track?.title ||
+          artworkFingerprint(this.track) !== fingerprint
+        )
+          return;
         if (this.artworkTimer) clearTimeout(this.artworkTimer);
         this.artworkTimer = undefined;
         this.artworkCacheProbeAbortController = undefined;
@@ -1729,27 +1629,30 @@ export class PlayerCoordinator {
     this.cancelActiveArtworkLookup();
     const abortController = new AbortController();
     this.artworkAbortController = abortController;
-    const resolution = typeof this.artworkPaletteService.resolve === 'function'
-      ? this.artworkPaletteService.resolve(requestedTrack, {
-          signal: abortController.signal,
-        })
-      : this.artworkPaletteService.find(requestedTrack).then((palette) => ({
-        palette,
-        status: palette.source === 'apple'
-          ? { state: 'success' as const, source: 'catalog' as const }
-          : {
-            state: 'fallback' as const,
-            reason: 'unknown' as const,
-            retryable: true,
-            cache: 'miss' as const,
-          },
-      }));
+    const resolution =
+      typeof this.artworkPaletteService.resolve === 'function'
+        ? this.artworkPaletteService.resolve(requestedTrack, {
+            signal: abortController.signal,
+          })
+        : this.artworkPaletteService.find(requestedTrack).then((palette) => ({
+            palette,
+            status:
+              palette.source === 'apple'
+                ? { state: 'success' as const, source: 'catalog' as const }
+                : {
+                    state: 'fallback' as const,
+                    reason: 'unknown' as const,
+                    retryable: true,
+                    cache: 'miss' as const,
+                  },
+          }));
     void resolution
       .then(({ palette, status }) => {
         if (
           sequence !== this.artworkLookupSequence ||
           fingerprint !== this.pendingArtworkFingerprint
-        ) return;
+        )
+          return;
         if (status.state === 'fallback') {
           this.pendingArtworkFingerprint = '';
           this.finishArtworkMetadataEpoch();
@@ -1762,7 +1665,8 @@ export class PlayerCoordinator {
         if (
           sequence !== this.artworkLookupSequence ||
           fingerprint !== this.pendingArtworkFingerprint
-        ) return;
+        )
+          return;
         this.pendingArtworkFingerprint = '';
         this.finishArtworkMetadataEpoch();
         this.applyArtworkFallback(
@@ -1815,10 +1719,8 @@ export class PlayerCoordinator {
 
   private recordArtworkDelivery(fingerprint: string): void {
     this.recordArtworkResolution(fingerprint);
-    if (
-      fingerprint !== this.artworkDeliveryFingerprint
-      || this.artworkDeliveryStartedAtMs <= 0
-    ) return;
+    if (fingerprint !== this.artworkDeliveryFingerprint || this.artworkDeliveryStartedAtMs <= 0)
+      return;
     const recorder = this.artworkPaletteService as ArtworkPaletteService & {
       recordDeliveryDuration?: (durationMs: number) => void;
     };
@@ -1832,10 +1734,11 @@ export class PlayerCoordinator {
 
   private recordArtworkResolution(fingerprint: string): void {
     if (
-      this.artworkResolutionRecorded
-      || fingerprint !== this.artworkDeliveryFingerprint
-      || this.artworkDeliveryStartedAtMs <= 0
-    ) return;
+      this.artworkResolutionRecorded ||
+      fingerprint !== this.artworkDeliveryFingerprint ||
+      this.artworkDeliveryStartedAtMs <= 0
+    )
+      return;
     const recorder = this.artworkPaletteService as ArtworkPaletteService & {
       recordResolutionDuration?: (durationMs: number) => void;
     };
@@ -1860,9 +1763,7 @@ export class PlayerCoordinator {
     this.artworkLookup = status;
     if (!retainPreviousPalette) this.artworkPalette = fallback;
 
-    const retryScheduled = status.retryable
-      ? this.scheduleArtworkRetry(fingerprint)
-      : false;
+    const retryScheduled = status.retryable ? this.scheduleArtworkRetry(fingerprint) : false;
     if (!status.retryable) this.clearArtworkRetry(true);
     this.activeArtworkFingerprint = retryScheduled ? '' : fingerprint;
     if (!retryScheduled) this.activeArtworkLookup = status;
@@ -1896,13 +1797,14 @@ export class PlayerCoordinator {
     this.artworkStalePaletteTimer = setTimeout(() => {
       this.artworkStalePaletteTimer = undefined;
       if (
-        !this.track?.title
-        || artworkFingerprint(this.track) !== fingerprint
-        || this.activeArtworkFingerprint !== fingerprint
-        || this.pendingArtworkFingerprint
-        || this.artworkLookup.state !== 'fallback'
-        || this.artworkStalePaletteFingerprint !== fingerprint
-      ) return;
+        !this.track?.title ||
+        artworkFingerprint(this.track) !== fingerprint ||
+        this.activeArtworkFingerprint !== fingerprint ||
+        this.pendingArtworkFingerprint ||
+        this.artworkLookup.state !== 'fallback' ||
+        this.artworkStalePaletteFingerprint !== fingerprint
+      )
+        return;
       this.artworkStalePaletteFingerprint = '';
       this.artworkStalePaletteTrack = null;
       this.artworkStalePaletteDeadlineMs = 0;
@@ -1914,9 +1816,9 @@ export class PlayerCoordinator {
 
   private resumeActiveArtworkFallback(fingerprint: string): void {
     if (
-      this.activeArtworkLookup.state !== 'fallback'
-      || this.artworkPalette?.source !== 'apple'
-      || !this.track?.title
+      this.activeArtworkLookup.state !== 'fallback' ||
+      this.artworkPalette?.source !== 'apple' ||
+      !this.track?.title
     ) {
       this.clearStaleArtworkPalette();
       return;
@@ -1973,10 +1875,10 @@ export class PlayerCoordinator {
     this.artworkRetryTimer = setTimeout(() => {
       this.artworkRetryTimer = undefined;
       if (
-        !this.track?.title
-        || artworkFingerprint(this.track) !== fingerprint
-        || this.artworkLookup.state !== 'fallback'
-        || !this.artworkLookup.retryable
+        !this.track?.title ||
+        artworkFingerprint(this.track) !== fingerprint ||
+        this.artworkLookup.state !== 'fallback' ||
+        !this.artworkLookup.retryable
       ) {
         this.artworkRetryFingerprint = '';
         return;
@@ -2070,7 +1972,8 @@ export class PlayerCoordinator {
     this.capturedAtMs = Date.now();
     if (action === 'toggle') this.status = this.status === 'playing' ? 'paused' : 'playing';
     if (action === 'restart') this.elapsedMs = 0;
-    if (action === 'forward') this.elapsedMs = Math.min(this.track.durationMs, this.elapsedMs + 15_000);
+    if (action === 'forward')
+      this.elapsedMs = Math.min(this.track.durationMs, this.elapsedMs + 15_000);
     this.publish();
   }
 }

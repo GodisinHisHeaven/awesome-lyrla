@@ -6,6 +6,7 @@
 
 ## 功能
 
+- [临近到达地图](docs/navigation-map.zh-CN.md)：有界 Tesla 路线、实测位置平滑与过期回退
 - Tesla Fleet Telemetry 实时播放状态
 - LRCLIB 同步歌词与候选版本选择
 - 可选 Supabase 歌词库、Apple TTML 补充和配色缓存

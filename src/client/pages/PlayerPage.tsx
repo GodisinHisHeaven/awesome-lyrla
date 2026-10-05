@@ -819,6 +819,7 @@ function StableLyricsView({
 }
 
 export function PlayerPage() {
+  const [navigationExpanded, setNavigationExpanded] = useState(false);
   const { snapshot, elapsedMs, streamConnected, unauthorized, error } = usePlayer();
   const ambientColors = useMemo(
     () => ambientFieldPalette(snapshot),
@@ -886,7 +887,7 @@ export function PlayerPage() {
           : '等待车辆';
   return (
     <main
-      className="am-player am-player--liquid-glass am-player--spatial-background"
+      className={`am-player am-player--liquid-glass am-player--spatial-background${snapshot.navigation && navigationExpanded ? ' am-player--navigation-expanded' : ''}`}
       style={
         {
           '--lg-palette-primary': ambientColors.primary,
@@ -913,7 +914,9 @@ export function PlayerPage() {
         </section>
       </section>
 
-      {snapshot.navigation && <NavigationCard navigation={snapshot.navigation} />}
+      {snapshot.navigation && (
+        <NavigationCard navigation={snapshot.navigation} onExpandedChange={setNavigationExpanded} />
+      )}
     </main>
   );
 }

@@ -8,6 +8,23 @@ export interface TrackMetadata {
   source: string;
 }
 
+export interface NavigationCoordinate {
+  latitude: number;
+  longitude: number;
+}
+
+export interface NavigationMapSnapshot {
+  location: NavigationCoordinate;
+  locationUpdatedAtMs: number;
+  destination: NavigationCoordinate;
+  destinationUpdatedAtMs: number;
+  /** Final section of Tesla's route, bounded to 256 points. */
+  route?: NavigationCoordinate[];
+  routeUpdatedAtMs?: number;
+  /** Last confirmation of the same destination with fresh navigation and position. */
+  routeConfirmedAtMs?: number;
+}
+
 export interface NavigationSnapshot {
   destinationName: string;
   minutesToArrival: number;
@@ -16,6 +33,8 @@ export interface NavigationSnapshot {
   distanceToArrivalMiles?: number;
   /** Estimated state of charge on arrival when a trusted projection is available. */
   arrivalBatteryPercent?: number;
+  /** Ephemeral location data; never written to the application store. */
+  map?: NavigationMapSnapshot;
 }
 
 export interface LyricLine {
@@ -73,10 +92,7 @@ export interface ArtworkPalette {
   field?: ArtworkSpatialField;
 }
 
-export type ArtworkLookupStage =
-  | 'primary-full'
-  | 'primary-core'
-  | 'fallback-core';
+export type ArtworkLookupStage = 'primary-full' | 'primary-core' | 'fallback-core';
 
 export type ArtworkLookupFailureReason =
   | 'insufficient-metadata'
@@ -106,17 +122,17 @@ export type ArtworkLookupFailureReason =
 export type ArtworkLookupStatus =
   | { state: 'idle' | 'loading' }
   | {
-    state: 'success';
-    source: 'catalog' | 'positive-cache' | 'supabase-cache';
-    stage?: ArtworkLookupStage;
-  }
+      state: 'success';
+      source: 'catalog' | 'positive-cache' | 'supabase-cache';
+      stage?: ArtworkLookupStage;
+    }
   | {
-    state: 'fallback';
-    reason: ArtworkLookupFailureReason;
-    retryable: boolean;
-    cache: 'miss' | 'negative-hit';
-    stage?: ArtworkLookupStage;
-  };
+      state: 'fallback';
+      reason: ArtworkLookupFailureReason;
+      retryable: boolean;
+      cache: 'miss' | 'negative-hit';
+      stage?: ArtworkLookupStage;
+    };
 
 export interface PlayerSnapshot {
   mode: 'demo' | 'live';
@@ -191,5 +207,4 @@ export interface TeslaVehicleSummary {
   state: string;
 }
 
-export type PlayerEvent =
-  { type: 'snapshot'; payload: PlayerSnapshot };
+export type PlayerEvent = { type: 'snapshot'; payload: PlayerSnapshot };

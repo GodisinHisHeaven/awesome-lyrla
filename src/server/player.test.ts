@@ -171,6 +171,55 @@ describe('PlayerCoordinator lyric resolution', () => {
     });
   });
 
+  it.each([
+    ['documented polyline', { stringValue: 'd3lzbnpAb3VkbGZGX2xFPz97bUB7e0M/' }],
+    ['typed vehicle envelope', { stringValue: 'Chh3eXNuekBvdWRsZkZfbEU/P3ttQHt7Qz8SAwisAg==' }],
+    ['MQTT vehicle envelope', 'Chh3eXNuekBvdWRsZkZfbEU/P3ttQHt7Qz8SAwisAg=='],
+  ])('unwraps GPS and %s without persisting location data', (_format, route) => {
+    const store = testStore();
+    const persistedBefore = JSON.stringify(store.snapshot());
+    const player = new PlayerCoordinator(
+      lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
+      artworkPaletteService(),
+      store,
+    );
+    try {
+      player.ingest(VIN, 'DestinationName', 'Airport');
+      player.ingest(VIN, 'MinutesToArrival', 2);
+      player.ingest(VIN, 'Location', {
+        value: { locationValue: { latitude: 31.18942, longitude: 121.32644 } },
+      });
+      player.ingest(VIN, 'DestinationLocation', {
+        locationValue: { latitude: 31.19521, longitude: 121.32719 },
+      });
+      player.ingest(VIN, 'RouteLine', route);
+      expect(player.snapshot().navigation?.map?.location).toEqual({
+        latitude: 31.18942,
+        longitude: 121.32644,
+      });
+      expect(player.snapshot().navigation?.map?.route).toHaveLength(4);
+      expect(JSON.stringify(store.snapshot())).toBe(persistedBefore);
+      player.ingest(VIN, 'RouteLine', 'EgMIrAISAwisAg==');
+      expect(player.snapshot().navigation?.map?.route).toBeUndefined();
+      expect(player.snapshot().navigation?.map?.location).toBeDefined();
+      player.ingest('5YJ00000000000001', 'Location', {
+        locationValue: { latitude: 0, longitude: 0 },
+      });
+      expect(player.snapshot().navigation?.map?.location.latitude).toBe(31.18942);
+      vi.mocked(store.readSelectedVin).mockReturnValue('5YJ00000000000001');
+      expect(player.snapshot().navigation).toBeNull();
+      vi.mocked(store.readSelectedVin).mockReturnValue(VIN);
+      expect(player.snapshot().navigation).toBeNull();
+      player.ingest(VIN, 'DestinationName', 'Airport');
+      player.ingest(VIN, 'MinutesToArrival', 2);
+      player.ingest(VIN, 'Location', { value: { invalid: true } });
+      expect(player.snapshot().navigation?.map).toBeUndefined();
+      expect(player.snapshot().navigation?.destinationName).toBe('Airport');
+    } finally {
+      player.dispose();
+    }
+  });
+
   it('keeps stationary navigation visible with 30s numeric and 60s destination resends', async () => {
     const player = new PlayerCoordinator(
       lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),

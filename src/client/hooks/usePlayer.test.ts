@@ -137,6 +137,51 @@ describe('usePlayer snapshot ordering', () => {
     vi.unstubAllGlobals();
   });
 
+  it('preserves lyrics and text navigation when an optional map is malformed on HTTP or SSE', async () => {
+    const navigation = {
+      destinationName: 'Synthetic destination',
+      minutesToArrival: 2,
+      updatedAtMs: 100,
+      map: { location: { latitude: 999, longitude: 0 } },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(response({ ...snapshot(100, 'Initial'), navigation } as PlayerSnapshot)),
+    );
+    const { result } = renderHook(() => usePlayer());
+    await act(settlePromises);
+    expect(result.current.snapshot?.navigation).toEqual({
+      destinationName: 'Synthetic destination',
+      minutesToArrival: 2,
+      updatedAtMs: 100,
+    });
+    expect(result.current.snapshot?.lyrics.lines[0].text).toBe('Initial lyrics');
+    act(() =>
+      MockEventSource.latest?.emitRawSnapshot(
+        JSON.stringify({ ...snapshot(200, 'Stream'), navigation }),
+      ),
+    );
+    expect(result.current.snapshot?.navigation?.map).toBeUndefined();
+    expect(result.current.snapshot?.lyrics.lines[0].text).toBe('Stream lyrics');
+    expect(result.current.streamConnected).toBe(true);
+    const validMap = {
+      location: { latitude: 0, longitude: 0 },
+      locationUpdatedAtMs: 300,
+      destination: { latitude: 0.001, longitude: 0.001 },
+      destinationUpdatedAtMs: 300,
+    };
+    act(() =>
+      MockEventSource.latest?.emitSnapshot({
+        ...snapshot(300, 'Valid'),
+        navigation: { ...navigation, map: validMap },
+      }),
+    );
+    expect(result.current.snapshot?.navigation?.map).toEqual(validMap);
+    expect(result.current.error).toBeNull();
+  });
+
   it('does not let a delayed initial HTTP snapshot or older SSE event replace a newer SSE snapshot', async () => {
     const initialHttp = deferred<Response>();
     const fetchMock = vi.fn(() => initialHttp.promise);
@@ -145,9 +190,12 @@ describe('usePlayer snapshot ordering', () => {
     const { result } = renderHook(() => usePlayer());
     const events = MockEventSource.latest;
     expect(events?.url).toBe('/api/events');
-    expect(fetchMock).toHaveBeenCalledWith('/api/player', expect.objectContaining({
-      cache: 'no-store',
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/player',
+      expect.objectContaining({
+        cache: 'no-store',
+      }),
+    );
 
     act(() => {
       events?.emitSnapshot(snapshot(200, 'New Track', 500, 2));
@@ -171,7 +219,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('does not let an older mutation response replace a newer SSE snapshot', async () => {
     const mutation = deferred<Response>();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(100, 'Initial Track', 1_000, 1)))
       .mockImplementationOnce(() => mutation.promise);
     vi.stubGlobal('fetch', fetchMock);
@@ -216,7 +265,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('backs off recovery GETs after an SSE error and cancels them on a valid snapshot', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(100, 'Initial Track', 1_000, 1)))
       .mockResolvedValueOnce(response(snapshot(110, 'Recovered by HTTP', 1_100, 1)))
       .mockResolvedValueOnce(response(snapshot(120, 'Recovered by HTTP again', 1_200, 1)));
@@ -261,7 +311,8 @@ describe('usePlayer snapshot ordering', () => {
     vi.useFakeTimers();
     const initial = deferred<Response>();
     const recovery = deferred<Response>();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockImplementationOnce(() => initial.promise)
       .mockImplementationOnce(() => recovery.promise);
     vi.stubGlobal('fetch', fetchMock);
@@ -325,7 +376,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('uses a generation-keyed 30 second watchdog without telemetry postponing it', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(loadingSnapshot(100, 'Track A', 1, 1)))
       .mockResolvedValueOnce(response(loadingSnapshot(130, 'Track A', 1, 1)));
     vi.stubGlobal('fetch', fetchMock);
@@ -349,7 +401,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('restarts the loading watchdog for a new generation and stops after resolution', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(loadingSnapshot(100, 'Track A', 1, 1)))
       .mockResolvedValueOnce(response(snapshot(300, 'Track B', 3_000, 3)));
     vi.stubGlobal('fetch', fetchMock);
@@ -378,7 +431,8 @@ describe('usePlayer snapshot ordering', () => {
   it('does not let a delayed recovery GET replace a newer SSE snapshot', async () => {
     vi.useFakeTimers();
     const recovery = deferred<Response>();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(100, 'Initial Track', 1_000, 1)))
       .mockImplementationOnce(() => recovery.promise);
     vi.stubGlobal('fetch', fetchMock);
@@ -425,7 +479,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('stops an established player session when a recovery GET returns 401', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(100, 'Initial Track', 1_000, 1)))
       .mockResolvedValueOnce(errorResponse(401, 'Expired activation'));
     vi.stubGlobal('fetch', fetchMock);
@@ -447,7 +502,8 @@ describe('usePlayer snapshot ordering', () => {
   it('does not let a delayed mutation reopen a session after a recovery 401', async () => {
     vi.useFakeTimers();
     const mutation = deferred<Response>();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(100, 'Initial Track', 1_000, 1)))
       .mockImplementationOnce(() => mutation.promise)
       .mockResolvedValueOnce(errorResponse(401, 'Expired activation'));
@@ -476,7 +532,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('protects against malformed SSE snapshots and recovers through HTTP', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(100, 'Initial Track', 1_000, 1)))
       .mockResolvedValueOnce(response(snapshot(200, 'HTTP Recovery', 2_000, 2)));
     vi.stubGlobal('fetch', fetchMock);
@@ -496,7 +553,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('rejects structurally incomplete initial JSON and starts recovery', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response({ capturedAtMs: 1 } as PlayerSnapshot))
       .mockResolvedValueOnce(response(snapshot(200, 'Valid Recovery', 2_000, 2)));
     vi.stubGlobal('fetch', fetchMock);
@@ -516,7 +574,8 @@ describe('usePlayer snapshot ordering', () => {
 
   it('does not let an incomplete or stale SSE event cancel HTTP recovery', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(response(snapshot(200, 'Current Track', 2_000, 2)))
       .mockResolvedValueOnce(response(snapshot(300, 'HTTP Recovery', 3_000, 3)));
     vi.stubGlobal('fetch', fetchMock);

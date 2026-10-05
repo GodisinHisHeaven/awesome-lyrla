@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlayerSnapshot } from '../../shared/contracts.js';
+import { isNavigationMap } from '../../shared/navigation-map.js';
 import { ApiError, api } from '../api.js';
 
 interface PlayerView {
@@ -71,67 +72,82 @@ function isPlayerSnapshot(value: unknown): value is PlayerSnapshot {
     return false;
   }
   if (
-    !Number.isFinite(value.elapsedMs)
-    || !Number.isFinite(value.capturedAtMs)
-    || !Number.isFinite(value.manualOffsetMs)
-  ) return false;
+    !Number.isFinite(value.elapsedMs) ||
+    !Number.isFinite(value.capturedAtMs) ||
+    !Number.isFinite(value.manualOffsetMs)
+  )
+    return false;
   if (value.track !== null) {
     if (!isRecord(value.track)) return false;
     if (
-      typeof value.track.title !== 'string'
-      || typeof value.track.artist !== 'string'
-      || typeof value.track.album !== 'string'
-      || typeof value.track.source !== 'string'
-      || !Number.isFinite(value.track.durationMs)
-    ) return false;
+      typeof value.track.title !== 'string' ||
+      typeof value.track.artist !== 'string' ||
+      typeof value.track.album !== 'string' ||
+      typeof value.track.source !== 'string' ||
+      !Number.isFinite(value.track.durationMs)
+    )
+      return false;
   }
   if (!isRecord(value.lyrics)) return false;
   if (!['synced', 'plain', 'missing', 'loading'].includes(String(value.lyrics.kind))) {
     return false;
   }
-  if (!Array.isArray(value.lyrics.lines) || !value.lyrics.lines.every((line) => (
-    isRecord(line)
-    && typeof line.id === 'string'
-    && typeof line.text === 'string'
-    && Number.isFinite(line.startMs)
-  ))) return false;
-  if (!['lrclib', 'apple', 'manual', 'demo', null].includes(
-    value.lyrics.provider as string | null,
-  )) return false;
+  if (
+    !Array.isArray(value.lyrics.lines) ||
+    !value.lyrics.lines.every(
+      (line) =>
+        isRecord(line) &&
+        typeof line.id === 'string' &&
+        typeof line.text === 'string' &&
+        Number.isFinite(line.startMs),
+    )
+  )
+    return false;
+  if (!['lrclib', 'apple', 'manual', 'demo', null].includes(value.lyrics.provider as string | null))
+    return false;
   if (value.artworkPalette !== null) {
     if (!isRecord(value.artworkPalette)) return false;
     if (
-      typeof value.artworkPalette.primary !== 'string'
-      || typeof value.artworkPalette.secondary !== 'string'
-      || !['apple', 'fallback'].includes(String(value.artworkPalette.source))
-    ) return false;
+      typeof value.artworkPalette.primary !== 'string' ||
+      typeof value.artworkPalette.secondary !== 'string' ||
+      !['apple', 'fallback'].includes(String(value.artworkPalette.source))
+    )
+      return false;
   }
   if (value.navigation !== undefined && value.navigation !== null) {
     if (!isRecord(value.navigation)) return false;
     if (
-      typeof value.navigation.destinationName !== 'string'
-      || !value.navigation.destinationName.trim()
-      || !Number.isFinite(value.navigation.minutesToArrival)
-      || Number(value.navigation.minutesToArrival) < 0
-      || !Number.isFinite(value.navigation.updatedAtMs)
-      || (
-        value.navigation.distanceToArrivalMiles !== undefined
-        && (
-          !Number.isFinite(value.navigation.distanceToArrivalMiles)
-          || Number(value.navigation.distanceToArrivalMiles) < 0
-        )
-      )
-      || (
-        value.navigation.arrivalBatteryPercent !== undefined
-        && (
-          !Number.isFinite(value.navigation.arrivalBatteryPercent)
-          || Number(value.navigation.arrivalBatteryPercent) < 0
-          || Number(value.navigation.arrivalBatteryPercent) > 100
-        )
-      )
-    ) return false;
+      typeof value.navigation.destinationName !== 'string' ||
+      !value.navigation.destinationName.trim() ||
+      !Number.isFinite(value.navigation.minutesToArrival) ||
+      Number(value.navigation.minutesToArrival) < 0 ||
+      !Number.isFinite(value.navigation.updatedAtMs) ||
+      (value.navigation.distanceToArrivalMiles !== undefined &&
+        (!Number.isFinite(value.navigation.distanceToArrivalMiles) ||
+          Number(value.navigation.distanceToArrivalMiles) < 0)) ||
+      (value.navigation.arrivalBatteryPercent !== undefined &&
+        (!Number.isFinite(value.navigation.arrivalBatteryPercent) ||
+          Number(value.navigation.arrivalBatteryPercent) < 0 ||
+          Number(value.navigation.arrivalBatteryPercent) > 100))
+    )
+      return false;
   }
   return true;
+}
+
+// A malformed optional map must never reject otherwise usable playback data.
+function decodeSnapshot(value: unknown): PlayerSnapshot | null {
+  let next = value;
+  if (
+    isRecord(next) &&
+    isRecord(next.navigation) &&
+    next.navigation.map !== undefined &&
+    !isNavigationMap(next.navigation.map)
+  ) {
+    const { map: _map, ...navigation } = next.navigation;
+    next = { ...next, navigation };
+  }
+  return isPlayerSnapshot(next) ? next : null;
 }
 
 export function usePlayer(): PlayerView {
@@ -144,10 +160,8 @@ export function usePlayer(): PlayerView {
   const loadingRefreshRef = useRef<(() => void) | null>(null);
   const authorizationBlockedRef = useRef(false);
   const acceptSnapshot = useCallback((next: PlayerSnapshot) => {
-    if (
-      authorizationBlockedRef.current
-      || !snapshotFollows(next, latestSnapshotRef.current)
-    ) return false;
+    if (authorizationBlockedRef.current || !snapshotFollows(next, latestSnapshotRef.current))
+      return false;
     latestSnapshotRef.current = {
       capturedAtMs: next.capturedAtMs,
       revision: finiteRevision(next.snapshotRevision),
@@ -188,15 +202,11 @@ export function usePlayer(): PlayerView {
     };
 
     const scheduleStreamRecovery = () => {
-      if (
-        cancelled
-        || authBlocked
-        || !streamRecoveryNeeded
-        || retryTimer !== undefined
-      ) return;
-      const delay = PLAYER_REFRESH_RETRY_DELAYS_MS[
-        Math.min(streamRecoveryAttempt, PLAYER_REFRESH_RETRY_DELAYS_MS.length - 1)
-      ];
+      if (cancelled || authBlocked || !streamRecoveryNeeded || retryTimer !== undefined) return;
+      const delay =
+        PLAYER_REFRESH_RETRY_DELAYS_MS[
+          Math.min(streamRecoveryAttempt, PLAYER_REFRESH_RETRY_DELAYS_MS.length - 1)
+        ];
       retryTimer = window.setTimeout(() => {
         retryTimer = undefined;
         if (cancelled || authBlocked || !streamRecoveryNeeded) return;
@@ -209,21 +219,20 @@ export function usePlayer(): PlayerView {
       }, delay);
     };
 
-    const requestSnapshot = async (
-      source: 'initial' | 'stream-recovery' | 'loading-watchdog',
-    ) => {
+    const requestSnapshot = async (source: 'initial' | 'stream-recovery' | 'loading-watchdog') => {
       if (cancelled || authBlocked || requestInFlight) return;
       requestInFlight = true;
       const controller = new AbortController();
       requestController = controller;
       const timeout = window.setTimeout(() => controller.abort(), PLAYER_REFRESH_TIMEOUT_MS);
       try {
-        const next = await api<unknown>('/api/player', {
+        const value = await api<unknown>('/api/player', {
           cache: 'no-store',
           signal: controller.signal,
         });
         if (cancelled || authBlocked) return;
-        if (!isPlayerSnapshot(next)) throw new Error('播放器返回了无效数据');
+        const next = decodeSnapshot(value);
+        if (!next) throw new Error('播放器返回了无效数据');
         acceptSnapshot(next);
       } catch (reason) {
         if (cancelled || authBlocked) return;
@@ -235,7 +244,9 @@ export function usePlayer(): PlayerView {
           setError(
             controller.signal.aborted
               ? '播放器响应超时'
-              : reason instanceof Error ? reason.message : '播放器加载失败',
+              : reason instanceof Error
+                ? reason.message
+                : '播放器加载失败',
           );
         }
         if (source === 'initial') streamRecoveryNeeded = true;
@@ -267,8 +278,8 @@ export function usePlayer(): PlayerView {
     events.addEventListener('snapshot', (event) => {
       if (cancelled || authBlocked) return;
       try {
-        const next: unknown = JSON.parse((event as MessageEvent<string>).data);
-        if (!isPlayerSnapshot(next)) {
+        const next = decodeSnapshot(JSON.parse((event as MessageEvent<string>).data));
+        if (!next) {
           throw new Error('Invalid player snapshot');
         }
         if (acceptSnapshot(next)) {
@@ -302,23 +313,29 @@ export function usePlayer(): PlayerView {
     return () => window.clearInterval(watchdog);
   }, [loadingKey, unauthorized]);
 
-  const setOffset = useCallback(async (offset: number) => {
-    acceptSnapshot(
-      await api<PlayerSnapshot>('/api/lyrics/offset', {
-        method: 'PUT',
-        body: JSON.stringify({ offsetMs: offset }),
-      }),
-    );
-  }, [acceptSnapshot]);
+  const setOffset = useCallback(
+    async (offset: number) => {
+      acceptSnapshot(
+        await api<PlayerSnapshot>('/api/lyrics/offset', {
+          method: 'PUT',
+          body: JSON.stringify({ offsetMs: offset }),
+        }),
+      );
+    },
+    [acceptSnapshot],
+  );
 
-  const demoAction = useCallback(async (action: 'toggle' | 'restart' | 'forward') => {
-    acceptSnapshot(
-      await api<PlayerSnapshot>('/api/demo/action', {
-        method: 'POST',
-        body: JSON.stringify({ action }),
-      }),
-    );
-  }, [acceptSnapshot]);
+  const demoAction = useCallback(
+    async (action: 'toggle' | 'restart' | 'forward') => {
+      acceptSnapshot(
+        await api<PlayerSnapshot>('/api/demo/action', {
+          method: 'POST',
+          body: JSON.stringify({ action }),
+        }),
+      );
+    },
+    [acceptSnapshot],
+  );
 
   return {
     snapshot,
