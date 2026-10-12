@@ -197,6 +197,10 @@ describe('PlayerPage Tesla companion layout', () => {
   });
 
   it('shows the current navigation destination and ETA without duplicating media metadata', () => {
+    vi.stubGlobal('visualViewport', { scale: 1.25 });
+    vi.stubGlobal('devicePixelRatio', 1.53);
+    vi.stubGlobal('screen', { width: 1254, height: 784 });
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' });
     vi.mocked(usePlayer).mockReturnValue({
       snapshot: {
         ...snapshot,
@@ -216,13 +220,20 @@ describe('PlayerPage Tesla companion layout', () => {
       demoAction: vi.fn(),
     });
 
-    render(
+    const { container } = render(
       <MemoryRouter>
         <PlayerPage />
       </MemoryRouter>,
     );
 
     const navigation = screen.getByLabelText('当前导航');
+    const chrome = container.querySelector<HTMLElement>('.am-player-chrome');
+    const lyrics = container.querySelector<HTMLElement>('.am-lyrics-shell');
+    expect(chrome?.style.getPropertyValue('--am-chrome-scale')).toBe('0.8');
+    expect(chrome?.style.getPropertyValue('--am-control-scale')).toBe(String(1 / 1.53));
+    expect(chrome).toContainElement(navigation);
+    expect(chrome).not.toContainElement(lyrics);
+    expect(navigation.parentElement).toHaveClass('am-navigation-scale');
     expect(navigation).toHaveTextContent('目的地');
     expect(navigation).toHaveTextContent('上海虹桥国际机场');
     expect(navigation).toHaveTextContent('剩余距离');

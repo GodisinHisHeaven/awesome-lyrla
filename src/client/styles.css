@@ -226,9 +226,21 @@ a { color: inherit; }
 }
 .am-player--spatial-background::after { display: none; }
 
-.am-toolbar {
+.am-player-chrome {
   position: absolute;
   z-index: 4;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--am-chrome-scale, 1));
+  height: calc(100% / var(--am-chrome-scale, 1));
+  transform: scale(var(--am-chrome-scale, 1));
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.am-toolbar {
+  position: absolute;
+  z-index: 1;
   top: 0;
   right: 0;
   left: 0;
@@ -236,7 +248,7 @@ a { color: inherit; }
   align-items: center;
   justify-content: space-between;
   padding:
-    max(16px, env(safe-area-inset-top))
+    max(calc(16px * var(--am-control-scale, 1)), env(safe-area-inset-top))
     max(clamp(24px, 4vw, 68px), env(safe-area-inset-right))
     0
     max(clamp(24px, 4vw, 68px), env(safe-area-inset-left));
@@ -257,6 +269,8 @@ a { color: inherit; }
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
   font-size: 12px;
   font-weight: 620;
+  transform: scale(var(--am-control-scale, 1));
+  transform-origin: top left;
 }
 .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
 .connection-dot.is-online { background: #8de6aa; box-shadow: 0 0 10px rgba(141, 230, 170, 0.72); }
@@ -270,11 +284,27 @@ a { color: inherit; }
   background: rgba(8, 10, 14, 0.34);
   backdrop-filter: blur(16px);
   text-decoration: none;
+  transform: scale(var(--am-control-scale, 1));
+  transform-origin: top right;
+}
+
+.am-navigation-scale {
+  position: absolute;
+  z-index: 1;
+  right: max(clamp(24px, 4vw, 68px), env(safe-area-inset-right));
+  bottom: max(clamp(22px, 3vw, 48px), env(safe-area-inset-bottom));
+  transform: scale(var(--am-control-scale, 1));
+  transform-origin: bottom right;
+}
+.am-navigation-scale > .am-navigation-card {
+  position: relative;
+  right: auto;
+  bottom: auto;
 }
 
 .am-navigation-card {
   position: absolute;
-  z-index: 4;
+  z-index: 1;
   right: max(clamp(24px, 4vw, 68px), env(safe-area-inset-right));
   bottom: max(clamp(22px, 3vw, 48px), env(safe-area-inset-bottom));
   display: grid;
@@ -797,9 +827,11 @@ a { color: inherit; }
   }
   .am-connection { min-height: 34px; padding-inline: 10px; }
   .am-round-button { width: 52px; height: 52px; }
-  .am-navigation-card {
+  .am-navigation-scale {
     right: max(16px, env(safe-area-inset-right));
     bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  .am-navigation-card {
     width: min(351px, calc(100vw - 32px));
     min-height: 115px;
     grid-template-columns: minmax(0, 1fr);

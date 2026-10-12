@@ -7,6 +7,7 @@ A real-time Tesla lyrics interface for personal, self-hosted deployments. It rea
 ## Features
 
 - [Near-arrival map](docs/navigation-map.md) with bounded Tesla route geometry, smooth observed position updates, and stale-data fallback
+- Player controls compensate for browser viewport zoom and the current Tesla center-display DPR profile while lyrics retain their normal size and scrolling. See [the display sync notes](docs/production-sync-20261012.md) for the device heuristic and validation limits.
 - Real-time playback state from Tesla Fleet Telemetry
 - Synchronized lyrics and candidate-version selection from LRCLIB
 - Optional Supabase lyrics library, Apple TTML enrichment, and artwork palette cache
