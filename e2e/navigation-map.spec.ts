@@ -3,14 +3,26 @@ import type { PlayerSnapshot } from '../src/shared/contracts.js';
 
 // Synthetic map coordinates and local tiles: never contact a real vehicle or tile provider.
 for (const viewport of [
-  { width: 1440, height: 900 },
-  { width: 390, height: 844 },
-  { width: 960, height: 480 },
+  { width: 1440, height: 900, dpr: 1, scale: 1 },
+  { width: 1254, height: 784, dpr: 1.53, scale: 1 },
+  { width: 1440, height: 900, dpr: 1, scale: 1.25 },
+  { width: 390, height: 844, dpr: 1, scale: 1 },
+  { width: 960, height: 480, dpr: 1, scale: 1 },
 ]) {
-  test(`keeps lyrics usable through map expansion and expiry at ${viewport.width}x${viewport.height}`, async ({
+  test(`keeps lyrics usable through map expansion and expiry at ${viewport.width}x${viewport.height} DPR ${viewport.dpr} zoom ${viewport.scale}`, async ({
     page,
   }, testInfo) => {
-    await page.setViewportSize(viewport);
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(({ dpr, scale }) => {
+      Object.defineProperty(window, 'devicePixelRatio', { value: dpr });
+      Object.defineProperty(window.screen, 'width', { value: 1254 });
+      Object.defineProperty(window.screen, 'height', { value: 784 });
+      Object.defineProperty(window.navigator, 'userAgent', {
+        value: 'Mozilla/5.0 (X11; Linux x86_64)',
+      });
+      if (window.visualViewport)
+        Object.defineProperty(window.visualViewport, 'scale', { value: scale });
+    }, viewport);
     const now = Date.UTC(2026, 0, 1);
     await page.clock.install({ time: now });
     const snapshot: PlayerSnapshot = {
@@ -88,6 +100,15 @@ for (const viewport of [
     if (viewport.width >= 600)
       expect(lyricsBox!.x + lyricsBox!.width).toBeLessThanOrEqual(cardBox!.x);
     else expect(lyricsBox!.y + lyricsBox!.height).toBeLessThanOrEqual(cardBox!.y);
+    const settings = page.getByRole('link', { name: '打开歌词设置' });
+    const settingsBox = await settings.boundingBox();
+    expect(settingsBox!.x + settingsBox!.width).toBeLessThanOrEqual(viewport.width);
+    expect(settingsBox!.x).toBeGreaterThan(viewport.width * 0.8);
+    await settings.click({ trial: true });
+    const lyricTransform = await lyrics.evaluate((node) => getComputedStyle(node).transform);
+    expect(lyricTransform).toBe('none');
+    const toggleBox = await page.getByRole('button', { name: '收起地图' }).boundingBox();
+    expect(toggleBox!.width * viewport.scale).toBeGreaterThanOrEqual(43.9);
     await page.screenshot({ path: testInfo.outputPath('arrival-map.png') });
     await page.getByRole('button', { name: '收起地图' }).click();
     await expect(page.locator('.am-navigation-map')).toHaveCount(0);

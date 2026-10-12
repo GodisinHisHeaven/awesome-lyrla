@@ -23,6 +23,7 @@ import {
 } from '../ambient-palette.js';
 import { SpatialAmbientBackdrop } from '../SpatialAmbientBackdrop.js';
 import { NavigationCard } from '../components/NavigationCard.js';
+import { playerChromeScales } from '../display-environment.js';
 import { usePlayer } from '../hooks/usePlayer.js';
 import {
   createMediaClock,
@@ -885,6 +886,7 @@ export function PlayerPage() {
         : snapshot.connection === 'offline'
           ? '连接中断 · 正在重连'
           : '等待车辆';
+  const chromeScales = playerChromeScales();
   return (
     <main
       className={`am-player am-player--liquid-glass am-player--spatial-background${snapshot.navigation && navigationExpanded ? ' am-player--navigation-expanded' : ''}`}
@@ -898,25 +900,40 @@ export function PlayerPage() {
     >
       <SpatialAmbientBackdrop field={spatialField} />
 
-      <header className="am-toolbar">
-        <div className="am-connection" role="status" title={snapshot.vehicleName}>
-          <span className={`connection-dot ${connected ? 'is-online' : ''}`} />
-          <span>{connectionLabel}</span>
-        </div>
-        <Link className="am-round-button" to="/setup" aria-label="打开歌词设置">
-          <Settings size={21} />
-        </Link>
-      </header>
+      <div
+        className="am-player-chrome"
+        style={
+          {
+            '--am-chrome-scale': chromeScales.viewport,
+            '--am-control-scale': chromeScales.controls,
+          } as CSSProperties
+        }
+      >
+        <header className="am-toolbar">
+          <div className="am-connection" role="status" title={snapshot.vehicleName}>
+            <span className={`connection-dot ${connected ? 'is-online' : ''}`} />
+            <span>{connectionLabel}</span>
+          </div>
+          <Link className="am-round-button" to="/setup" aria-label="打开歌词设置">
+            <Settings size={21} />
+          </Link>
+        </header>
+
+        {snapshot.navigation && (
+          <div className="am-navigation-scale">
+            <NavigationCard
+              navigation={snapshot.navigation}
+              onExpandedChange={setNavigationExpanded}
+            />
+          </div>
+        )}
+      </div>
 
       <section className="am-lyrics-shell">
         <section className="am-lyrics-panel" aria-label="同步歌词">
           <StableLyricsView snapshot={snapshot} elapsedMs={elapsedMs} />
         </section>
       </section>
-
-      {snapshot.navigation && (
-        <NavigationCard navigation={snapshot.navigation} onExpandedChange={setNavigationExpanded} />
-      )}
     </main>
   );
 }
