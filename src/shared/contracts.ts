@@ -130,6 +130,8 @@ export type ArtworkLookupStatus =
       state: 'fallback';
       reason: ArtworkLookupFailureReason;
       retryable: boolean;
+      /** Earliest useful retry after a local search quota is exhausted. */
+      retryAfterMs?: number;
       cache: 'miss' | 'negative-hit';
       stage?: ArtworkLookupStage;
     };
