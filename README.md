@@ -11,6 +11,7 @@ A real-time Tesla lyrics interface for personal, self-hosted deployments. It rea
 - Real-time playback state from Tesla Fleet Telemetry
 - Synchronized lyrics and candidate-version selection from LRCLIB
 - Optional Supabase lyrics library, Apple TTML enrichment, and artwork palette cache
+- Artwork searches reuse short-lived provider responses and wait for local quota recovery before retrying; palette extraction reuses exact byte conversions.
 - Manual LRC input, timing offsets, and local persistence
 - One-time activation for the Tesla browser
 - Bounded memory/disk caches and lightweight production telemetry

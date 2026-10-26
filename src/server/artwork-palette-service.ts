@@ -19,11 +19,7 @@ import {
 } from '../shared/track.js';
 import { config } from './config.js';
 import { FixedDurationHistogram, type DurationStats } from './runtime-performance.js';
-import type {
-  CachedArtworkFailureReason,
-  CachedArtworkPalette,
-  StateStore,
-} from './store.js';
+import type { CachedArtworkFailureReason, CachedArtworkPalette, StateStore } from './store.js';
 import {
   createSupabasePaletteStore,
   type PaletteReadResult,
@@ -33,14 +29,16 @@ import {
 
 const appleSearchSchema = z.object({
   resultCount: z.number(),
-  results: z.array(z.object({
-    trackId: z.number(),
-    trackName: z.string(),
-    artistName: z.string(),
-    collectionName: z.string().optional().default(''),
-    trackTimeMillis: z.number().optional().default(0),
-    artworkUrl100: z.string().url().optional(),
-  })),
+  results: z.array(
+    z.object({
+      trackId: z.number(),
+      trackName: z.string(),
+      artistName: z.string(),
+      collectionName: z.string().optional().default(''),
+      trackTimeMillis: z.number().optional().default(0),
+      artworkUrl100: z.string().url().optional(),
+    }),
+  ),
 });
 
 const hexColorSchema = z.string().regex(/^#[0-9A-F]{6}$/);
@@ -81,9 +79,7 @@ type SearchPlan = {
 };
 type MatchRejectionReason = Extract<
   ArtworkLookupFailureReason,
-  | 'catalog-version-mismatch'
-  | 'catalog-album-mismatch'
-  | 'catalog-low-confidence'
+  'catalog-version-mismatch' | 'catalog-album-mismatch' | 'catalog-low-confidence'
 >;
 type SearchSummary = {
   matches: AppleCandidateMatch[];
@@ -108,6 +104,9 @@ const POSITIVE_CACHE_MS = 30 * 24 * 60 * 60 * 1_000;
 const NEGATIVE_CACHE_MS = 6 * 60 * 60 * 1_000;
 const SEARCH_WINDOW_MS = 60_000;
 const SEARCHES_PER_WINDOW = 18;
+const SEARCH_CACHE_MS = 120_000;
+const SEARCH_CACHE_MAX_ENTRIES = 64;
+const SEARCH_CACHE_MAX_BYTES = 1_024 * 1_024;
 const SEARCH_BODY_LIMIT = 512 * 1_024;
 const ARTWORK_BODY_LIMIT = 2 * 1_024 * 1_024;
 const ARTWORK_CACHE_MAX_ENTRIES = 500;
@@ -175,7 +174,7 @@ const ARTWORK_DURATION_PHASES = [
   'delivery',
   'total',
 ] as const;
-type ArtworkDurationPhase = typeof ARTWORK_DURATION_PHASES[number];
+type ArtworkDurationPhase = (typeof ARTWORK_DURATION_PHASES)[number];
 
 export interface ArtworkLookupOptions {
   signal?: AbortSignal;
@@ -185,19 +184,23 @@ type LookupFailure = {
   reason: ArtworkLookupFailureReason;
   retryable: boolean;
   stage?: ArtworkLookupStage;
+  retryAfterMs?: number;
 };
+
+class LocalSearchRateLimitError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super('local_search_rate_limit');
+  }
+}
 type RemotePaletteOutcome =
-  | { state: 'hit'; result: PaletteReadResult }
-  | { state: 'miss' }
-  | { state: 'unavailable' };
+  { state: 'hit'; result: PaletteReadResult } | { state: 'miss' } | { state: 'unavailable' };
 
 function countRecord<T extends string>(keys: T[]): Record<T, number> {
   return Object.fromEntries(keys.map((key) => [key, 0])) as Record<T, number>;
 }
 
 function knownLookupStage(value: unknown): value is ArtworkLookupStage {
-  return typeof value === 'string'
-    && ARTWORK_LOOKUP_STAGES.includes(value as ArtworkLookupStage);
+  return typeof value === 'string' && ARTWORK_LOOKUP_STAGES.includes(value as ArtworkLookupStage);
 }
 
 function knownCachedFailureReason(value: unknown): value is CachedArtworkFailureReason {
@@ -245,7 +248,9 @@ function isTimeout(error: unknown): boolean {
 }
 
 function isCancellation(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError' && error.message === 'lookup_canceled';
+  return (
+    error instanceof Error && error.name === 'AbortError' && error.message === 'lookup_canceled'
+  );
 }
 
 function errorCode(error: unknown): string {
@@ -253,6 +258,9 @@ function errorCode(error: unknown): string {
 }
 
 function catalogFailure(error: unknown, stage: ArtworkLookupStage): LookupFailure {
+  if (error instanceof LocalSearchRateLimitError) {
+    return { reason: 'local-rate-limit', retryable: true, stage, retryAfterMs: error.retryAfterMs };
+  }
   const code = errorCode(error);
   if (isTimeout(error)) return { reason: 'catalog-timeout', retryable: true, stage };
   if (code === 'catalog_http_429') return { reason: 'catalog-rate-limit', retryable: true, stage };
@@ -289,10 +297,10 @@ function artworkFailure(error: unknown, stage: ArtworkLookupStage): LookupFailur
     return { reason: 'artwork-http-server', retryable: true, stage };
   }
   if (
-    code === 'response_too_large'
-    || code === 'unsupported_artwork_type'
-    || code === 'unsupported_artwork_channels'
-    || code === 'artwork_type_mismatch'
+    code === 'response_too_large' ||
+    code === 'unsupported_artwork_type' ||
+    code === 'unsupported_artwork_channels' ||
+    code === 'artwork_type_mismatch'
   ) {
     return { reason: 'artwork-invalid-response', retryable: false, stage };
   }
@@ -370,27 +378,35 @@ function derivedSecondary(primary: Rgb, neutralArtwork = false): Rgb {
   if (neutralArtwork || hsl.s < 0.08) {
     return hslToRgb({ h: 0, s: 0, l: hsl.l > 0.46 ? hsl.l - 0.16 : hsl.l + 0.16 });
   }
-  return hslToRgb({ h: (hsl.h + 42) % 360, s: hsl.s, l: Math.max(0.3, Math.min(0.58, hsl.l + 0.04)) });
+  return hslToRgb({
+    h: (hsl.h + 42) % 360,
+    s: hsl.s,
+    l: Math.max(0.3, Math.min(0.58, hsl.l + 0.04)),
+  });
 }
 
 function toHex(color: Rgb): string {
   return `#${[color.r, color.g, color.b]
-    .map((channel) => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0'))
+    .map((channel) =>
+      Math.max(0, Math.min(255, Math.round(channel)))
+        .toString(16)
+        .padStart(2, '0'),
+    )
     .join('')}`.toUpperCase();
 }
 
 function srgbToLinear(channel: number): number {
   const value = Math.max(0, Math.min(255, channel)) / 255;
-  return value <= 0.04045
-    ? value / 12.92
-    : ((value + 0.055) / 1.055) ** 2.4;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
 }
+
+// Decoded pixel channels are bytes. Reuse their exact double-precision
+// conversion across all 24 spatial cells; tone-mapped floats still use the formula.
+const SRGB_BYTE_TO_LINEAR = Float64Array.from({ length: 256 }, (_, value) => srgbToLinear(value));
 
 function linearToSrgb(channel: number): number {
   const value = Math.max(0, Math.min(1, channel));
-  const encoded = value <= 0.0031308
-    ? value * 12.92
-    : 1.055 * value ** (1 / 2.4) - 0.055;
+  const encoded = value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055;
   return Math.round(encoded * 255);
 }
 
@@ -425,17 +441,20 @@ function spatialField(
           const dy = (y - centerY) / SPATIAL_SAMPLE_SIGMA;
           const weight = Math.exp(-0.5 * (dx * dx + dy * dy));
           const offset = (y * SPATIAL_SAMPLE_WIDTH + x) * channels;
-          linearTotal.r += srgbToLinear(data[offset]) * weight;
-          linearTotal.g += srgbToLinear(data[offset + 1]) * weight;
-          linearTotal.b += srgbToLinear(data[offset + 2]) * weight;
+          linearTotal.r += SRGB_BYTE_TO_LINEAR[data[offset]] * weight;
+          linearTotal.g += SRGB_BYTE_TO_LINEAR[data[offset + 1]] * weight;
+          linearTotal.b += SRGB_BYTE_TO_LINEAR[data[offset + 2]] * weight;
           weightTotal += weight;
         }
       }
-      const toneMapped = spatialColor({
-        r: linearToSrgb(linearTotal.r / weightTotal),
-        g: linearToSrgb(linearTotal.g / weightTotal),
-        b: linearToSrgb(linearTotal.b / weightTotal),
-      }, neutralArtwork);
+      const toneMapped = spatialColor(
+        {
+          r: linearToSrgb(linearTotal.r / weightTotal),
+          g: linearToSrgb(linearTotal.g / weightTotal),
+          b: linearToSrgb(linearTotal.b / weightTotal),
+        },
+        neutralArtwork,
+      );
       colors.push(toHex(toneMapped));
       fieldLinearTotal.r += srgbToLinear(toneMapped.r);
       fieldLinearTotal.g += srgbToLinear(toneMapped.g);
@@ -449,11 +468,13 @@ function spatialField(
     b: linearToSrgb(fieldLinearTotal.b / cellCount),
   };
   const averageHsl = rgbToHsl(average);
-  const base = toHex(hslToRgb({
-    h: averageHsl.h,
-    s: Math.min(0.55, averageHsl.s),
-    l: Math.max(0.09, Math.min(0.28, averageHsl.l * 0.58)),
-  }));
+  const base = toHex(
+    hslToRgb({
+      h: averageHsl.h,
+      s: Math.min(0.55, averageHsl.s),
+      l: Math.max(0.09, Math.min(0.28, averageHsl.l * 0.58)),
+    }),
+  );
   const id = `field:${createHash('sha256')
     .update(`organic-gaussian-v2:${base}:${colors.join(',')}`)
     .digest('hex')
@@ -519,13 +540,14 @@ interface ArtworkAnalysis {
 async function analyzeArtwork(image: Buffer): Promise<ArtworkAnalysis> {
   const pipeline = sharp(image, { failOn: 'error', limitInputPixels: 1_000_000 });
   const metadata = await pipeline.metadata();
-  const contentType = metadata.format === 'jpeg'
-    ? 'image/jpeg'
-    : metadata.format === 'png'
-      ? 'image/png'
-      : metadata.format === 'webp'
-        ? 'image/webp'
-        : null;
+  const contentType =
+    metadata.format === 'jpeg'
+      ? 'image/jpeg'
+      : metadata.format === 'png'
+        ? 'image/png'
+        : metadata.format === 'webp'
+          ? 'image/webp'
+          : null;
   if (!contentType) throw new Error('unsupported_artwork_type');
   const { data, info } = await pipeline
     .rotate()
@@ -571,10 +593,9 @@ async function analyzeArtwork(image: Buffer): Promise<ArtworkAnalysis> {
     buckets.set(key, bucket);
   }
 
-  const neutralArtwork = usablePixels === 0 || (
-    saturationTotal / usablePixels < 0.1
-    && chromaticPixels / usablePixels < 0.12
-  );
+  const neutralArtwork =
+    usablePixels === 0 ||
+    (saturationTotal / usablePixels < 0.1 && chromaticPixels / usablePixels < 0.12);
   const ranked = [...buckets.values()]
     .map((bucket) => ({
       r: bucket.r / bucket.weight,
@@ -584,9 +605,7 @@ async function analyzeArtwork(image: Buffer): Promise<ArtworkAnalysis> {
       score: bucket.score,
       count: bucket.count,
     }))
-    .sort((left, right) => neutralArtwork
-      ? right.count - left.count
-      : right.score - left.score);
+    .sort((left, right) => (neutralArtwork ? right.count - left.count : right.score - left.score));
   const rawPrimary = ranked[0] ?? {
     r: totalPixels ? average.r / totalPixels : 54,
     g: totalPixels ? average.g / totalPixels : 54,
@@ -597,8 +616,9 @@ async function analyzeArtwork(image: Buffer): Promise<ArtworkAnalysis> {
     .slice(1)
     .map((candidate) => ({
       candidate,
-      rank: (neutralArtwork ? candidate.count : candidate.score)
-        * (0.35 + rgbDistance(rawPrimary, candidate) / 220),
+      rank:
+        (neutralArtwork ? candidate.count : candidate.score) *
+        (0.35 + rgbDistance(rawPrimary, candidate) / 220),
     }))
     .sort((left, right) => right.rank - left.rank)[0]?.candidate;
   let secondary = secondaryCandidate
@@ -651,9 +671,10 @@ function candidateEvidence(track: TrackMetadata, candidate: AppleCandidate) {
   const title = metadataSimilarity(track.title, candidate.trackName);
   const artist = metadataSimilarity(track.artist, candidate.artistName);
   const album = track.album ? metadataSimilarity(track.album, candidate.collectionName) : 0;
-  const durationDifference = track.durationMs > 0
-    ? Math.abs(track.durationMs - candidate.trackTimeMillis) / 1_000
-    : Number.POSITIVE_INFINITY;
+  const durationDifference =
+    track.durationMs > 0
+      ? Math.abs(track.durationMs - candidate.trackTimeMillis) / 1_000
+      : Number.POSITIVE_INFINITY;
   return { title, artist, album, durationDifference };
 }
 
@@ -663,29 +684,28 @@ function candidateRejection(
   score: number,
 ): MatchRejectionReason | null {
   const { title, artist, album, durationDifference } = candidateEvidence(track, candidate);
-  if (metadataVersionMismatch(
-    `${track.title} ${track.album}`,
-    `${candidate.trackName} ${candidate.collectionName}`,
-  )) return 'catalog-version-mismatch';
+  if (
+    metadataVersionMismatch(
+      `${track.title} ${track.album}`,
+      `${candidate.trackName} ${candidate.collectionName}`,
+    )
+  )
+    return 'catalog-version-mismatch';
   const releaseMatches = normalizeMetadata(track.album)
     ? album >= 0.68
     : track.durationMs <= 0 || durationDifference <= 12;
   if (!releaseMatches) return 'catalog-album-mismatch';
   if (normalizeMetadata(track.artist)) {
-    return score >= 0.72 && title >= 0.78 && artist >= 0.64
-      ? null
-      : 'catalog-low-confidence';
+    return score >= 0.72 && title >= 0.78 && artist >= 0.64 ? null : 'catalog-low-confidence';
   }
   if (
-    !normalizeMetadata(track.album)
-    || album < 0.75
-    || (track.durationMs > 0 && durationDifference > 8)
+    !normalizeMetadata(track.album) ||
+    album < 0.75 ||
+    (track.durationMs > 0 && durationDifference > 8)
   ) {
     return 'catalog-album-mismatch';
   }
-  return score >= 0.82 && title >= 0.92
-    ? null
-    : 'catalog-low-confidence';
+  return score >= 0.82 && title >= 0.92 ? null : 'catalog-low-confidence';
 }
 
 function candidateSelectionScore(track: TrackMetadata, candidate: AppleCandidate): number {
@@ -704,11 +724,13 @@ function candidateStrong(track: TrackMetadata, match: AppleCandidateMatch): bool
   const { title, artist, album, durationDifference } = candidateEvidence(track, match.candidate);
   const hasArtist = Boolean(normalizeMetadata(track.artist));
   const hasAlbum = Boolean(normalizeMetadata(track.album));
-  return match.score >= 0.88
-    && title >= 0.96
-    && (hasArtist ? artist >= 0.9 : hasAlbum && album >= 0.9)
-    && (!hasAlbum || album >= 0.9)
-    && (track.durationMs <= 0 || durationDifference <= 5);
+  return (
+    match.score >= 0.88 &&
+    title >= 0.96 &&
+    (hasArtist ? artist >= 0.9 : hasAlbum && album >= 0.9) &&
+    (!hasAlbum || album >= 0.9) &&
+    (track.durationMs <= 0 || durationDifference <= 5)
+  );
 }
 
 function searchPlans(track: TrackMetadata): SearchPlan[] {
@@ -716,10 +738,11 @@ function searchPlans(track: TrackMetadata): SearchPlan[] {
     ? config.artwork.appleStorefront
     : 'US';
   const fullTerm = clipped([track.title, track.artist, track.album].filter(Boolean).join(' '));
-  const coreTerm = clipped([
-    track.title,
-    normalizeMetadata(track.artist) ? track.artist : track.album,
-  ].filter(Boolean).join(' '));
+  const coreTerm = clipped(
+    [track.title, normalizeMetadata(track.artist) ? track.artist : track.album]
+      .filter(Boolean)
+      .join(' '),
+  );
   const candidates: SearchPlan[] = [
     { stage: 'primary-full', storefront: primary, term: fullTerm },
     { stage: 'primary-core', storefront: primary, term: coreTerm },
@@ -733,25 +756,33 @@ function searchPlans(track: TrackMetadata): SearchPlan[] {
       })),
   ];
   const seen = new Set<string>();
-  return candidates.filter((plan) => {
-    const key = `${plan.storefront}:${normalizeMetadata(plan.term)}`;
-    if (!normalizeMetadata(plan.term) || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, SEARCH_PLAN_LIMIT);
+  return candidates
+    .filter((plan) => {
+      const key = `${plan.storefront}:${normalizeMetadata(plan.term)}`;
+      if (!normalizeMetadata(plan.term) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, SEARCH_PLAN_LIMIT);
 }
 
 export class ArtworkPaletteService {
-  private readonly inFlight = new Map<string, {
-    promise: Promise<ArtworkLookupResult>;
-    signal?: AbortSignal;
-  }>();
+  private readonly inFlight = new Map<
+    string,
+    {
+      promise: Promise<ArtworkLookupResult>;
+      signal?: AbortSignal;
+    }
+  >();
   private readonly memoryCache = new Map<string, CachedArtworkPalette>();
   private readonly remotePaletteReads = new Map<string, Promise<RemotePaletteOutcome>>();
-  private readonly recentRemotePaletteOutcomes = new Map<string, {
-    expiresAt: number;
-    outcome: RemotePaletteOutcome;
-  }>();
+  private readonly recentRemotePaletteOutcomes = new Map<
+    string,
+    {
+      expiresAt: number;
+      outcome: RemotePaletteOutcome;
+    }
+  >();
   private readonly paletteWriteQueue: PaletteWriteInput[] = [];
   private readonly persistedPaletteWrites = new Set<string>();
   private readonly lookupWaiters: Array<{
@@ -773,6 +804,21 @@ export class ArtworkPaletteService {
   private lastPaletteWriteState: 'ok' | 'error' | null = null;
   private lastPaletteWriteReason: string | null = null;
   private searchTimestamps: number[] = [];
+  private readonly searchCache = new Map<
+    string,
+    {
+      payload: z.infer<typeof appleSearchSchema>;
+      expiresAt: number;
+      bytes: number;
+    }
+  >();
+  private searchCacheBytes = 0;
+  private searchCacheReuses = 0;
+  private readonly retryOutcomes = {
+    'retry-1': { success: 0, fallback: 0, rateLimited: 0 },
+    'retry-2': { success: 0, fallback: 0, rateLimited: 0 },
+    'retry-3': { success: 0, fallback: 0, rateLimited: 0 },
+  };
   private lookupRequests = 0;
   private lookupSuccesses = 0;
   private lookupFallbacks = 0;
@@ -818,10 +864,11 @@ export class ArtworkPaletteService {
       this.observeDuration('local', localStartedAt);
       if (cached?.expiresAt && cached.expiresAt > Date.now()) {
         if (
-          cached.palette === null
-          && cached.lookupStrategy === LOOKUP_STRATEGY
-          && knownCachedFailureReason(cached.failureReason)
-        ) return this.recordCacheProbeMiss();
+          cached.palette === null &&
+          cached.lookupStrategy === LOOKUP_STRATEGY &&
+          knownCachedFailureReason(cached.failureReason)
+        )
+          return this.recordCacheProbeMiss();
         const parsed = artworkPaletteSchema.safeParse(cached.palette);
         if (parsed.success) {
           const stage = knownLookupStage(cached.lookupStage) ? cached.lookupStage : undefined;
@@ -843,10 +890,7 @@ export class ArtworkPaletteService {
       }
       if (!this.paletteStore?.read) return this.recordCacheProbeMiss();
 
-      const remote = await this.awaitWithSignal(
-        this.readRemotePaletteShared(key),
-        options.signal,
-      );
+      const remote = await this.awaitWithSignal(this.readRemotePaletteShared(key), options.signal);
       throwIfCanceled(options.signal);
       if (remote.state !== 'hit') return this.recordCacheProbeMiss();
       return this.recordCacheProbeHit(this.remotePaletteResult(key, remote.result));
@@ -899,9 +943,9 @@ export class ArtworkPaletteService {
     this.observeDuration('local', localStartedAt);
     if (cached && cached.expiresAt > Date.now()) {
       if (
-        cached.palette === null
-        && cached.lookupStrategy === LOOKUP_STRATEGY
-        && knownCachedFailureReason(cached.failureReason)
+        cached.palette === null &&
+        cached.lookupStrategy === LOOKUP_STRATEGY &&
+        knownCachedFailureReason(cached.failureReason)
       ) {
         const stage = knownLookupStage(cached.lookupStage) ? cached.lookupStage : undefined;
         const status: ArtworkLookupStatus = {
@@ -937,11 +981,7 @@ export class ArtworkPaletteService {
       }
     }
     const existing = this.inFlight.get(key);
-    if (
-      existing
-      && !existing.signal?.aborted
-      && (!existing.signal || existing.signal === signal)
-    ) {
+    if (existing && !existing.signal?.aborted && (!existing.signal || existing.signal === signal)) {
       return this.awaitWithSignal(existing.promise, signal);
     }
     const deadline = Date.now() + LOOKUP_BUDGET_MS;
@@ -999,18 +1039,16 @@ export class ArtworkPaletteService {
     deadline: number,
     signal?: AbortSignal,
   ): Promise<ArtworkLookupResult> {
-    const startAppleLookup = (lookupSignal = signal) => this.withLookupSlot(
-      () => this.lookup(track, key, deadline, lookupSignal),
-      deadline,
-      lookupSignal,
-    );
+    const startAppleLookup = (lookupSignal = signal) =>
+      this.withLookupSlot(
+        () => this.lookup(track, key, deadline, lookupSignal),
+        deadline,
+        lookupSignal,
+      );
     if (!this.paletteStore?.read) return startAppleLookup();
 
     const remote = this.readRemotePaletteShared(key);
-    const early = await Promise.race([
-      remote,
-      delay(SUPABASE_HEDGE_DELAY_MS).then(() => null),
-    ]);
+    const early = await Promise.race([remote, delay(SUPABASE_HEDGE_DELAY_MS).then(() => null)]);
     throwIfCanceled(signal);
     if (early !== null) {
       return early.state === 'hit'
@@ -1021,9 +1059,7 @@ export class ArtworkPaletteService {
     // Do not add the full Supabase timeout to Apple latency. Start Apple after
     // a short head start, then use whichever valid result arrives first.
     const appleAbort = new AbortController();
-    const appleSignal = signal
-      ? AbortSignal.any([signal, appleAbort.signal])
-      : appleAbort.signal;
+    const appleSignal = signal ? AbortSignal.any([signal, appleAbort.signal]) : appleAbort.signal;
     const apple = startAppleLookup(appleSignal);
     const appleOutcome = apple.then((result) => ({
       result,
@@ -1122,9 +1158,7 @@ export class ArtworkPaletteService {
     }
   }
 
-  private recordCacheProbeHit(
-    result: ArtworkLookupSuccessResult,
-  ): ArtworkLookupSuccessResult {
+  private recordCacheProbeHit(result: ArtworkLookupSuccessResult): ArtworkLookupSuccessResult {
     this.cacheProbeHits += 1;
     return result;
   }
@@ -1134,10 +1168,7 @@ export class ArtworkPaletteService {
     return null;
   }
 
-  private remotePaletteResult(
-    key: string,
-    remote: PaletteReadResult,
-  ): ArtworkLookupSuccessResult {
+  private remotePaletteResult(key: string, remote: PaletteReadResult): ArtworkLookupSuccessResult {
     this.supabaseCacheHits += 1;
     const value: CachedArtworkPalette = {
       palette: structuredClone(remote.palette),
@@ -1164,12 +1195,19 @@ export class ArtworkPaletteService {
   }
 
   lookupStats() {
+    this.pruneSearchCache();
     return {
       strategy: LOOKUP_STRATEGY,
       requests: this.lookupRequests,
       successes: this.lookupSuccesses,
       fallbacks: this.lookupFallbacks,
       searchRequests: this.searchRequests,
+      searchCache: {
+        reuses: this.searchCacheReuses,
+        entries: this.searchCache.size,
+        bytes: this.searchCacheBytes,
+      },
+      retryOutcomes: structuredClone(this.retryOutcomes),
       cacheHits: {
         positive: this.positiveCacheHits,
         negative: this.negativeCacheHits,
@@ -1201,10 +1239,7 @@ export class ArtworkPaletteService {
         failures: this.localPersistFailures,
       },
       durations: Object.fromEntries(
-        ARTWORK_DURATION_PHASES.map((phase) => [
-          phase,
-          this.durations.get(phase)!.snapshot(),
-        ]),
+        ARTWORK_DURATION_PHASES.map((phase) => [phase, this.durations.get(phase)!.snapshot()]),
       ) as Record<ArtworkDurationPhase, DurationStats>,
       stageAttempts: { ...this.stageAttempts },
       stageHits: { ...this.stageHits },
@@ -1214,12 +1249,26 @@ export class ArtworkPaletteService {
     };
   }
 
-  private consumeSearchSlot(): boolean {
+  recordRetryOutcome(attempt: number, status: ArtworkLookupStatus): void {
+    const key = `retry-${attempt}` as keyof typeof this.retryOutcomes;
+    const counters = this.retryOutcomes[key];
+    if (!counters) return;
+    if (status.state === 'success') counters.success += 1;
+    if (status.state === 'fallback') {
+      counters.fallback += 1;
+      if (status.reason === 'local-rate-limit') counters.rateLimited += 1;
+    }
+  }
+
+  private consumeSearchSlot(): void {
     const cutoff = Date.now() - SEARCH_WINDOW_MS;
     this.searchTimestamps = this.searchTimestamps.filter((timestamp) => timestamp > cutoff);
-    if (this.searchTimestamps.length >= SEARCHES_PER_WINDOW) return false;
+    if (this.searchTimestamps.length >= SEARCHES_PER_WINDOW) {
+      throw new LocalSearchRateLimitError(
+        Math.max(1, this.searchTimestamps[0] + SEARCH_WINDOW_MS - Date.now()),
+      );
+    }
     this.searchTimestamps.push(Date.now());
-    return true;
   }
 
   private recordResult(status: ArtworkLookupStatus): void {
@@ -1249,6 +1298,7 @@ export class ArtworkPaletteService {
       retryable: failure.retryable,
       cache,
       ...(failure.stage ? { stage: failure.stage } : {}),
+      ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }),
     };
     if (cache === 'miss') safeFallbackLog(failure);
     this.recordResult(status);
@@ -1266,9 +1316,11 @@ export class ArtworkPaletteService {
       'catalog-invalid-response',
       'unknown',
     ];
-    return [...failures].sort(
-      (left, right) => priority.indexOf(left.reason) - priority.indexOf(right.reason),
-    )[0] ?? { reason: 'unknown', retryable: true };
+    return (
+      [...failures].sort(
+        (left, right) => priority.indexOf(left.reason) - priority.indexOf(right.reason),
+      )[0] ?? { reason: 'unknown', retryable: true }
+    );
   }
 
   private selectMatch(matches: AppleCandidateMatch[]): AppleCandidateMatch | LookupFailure | null {
@@ -1280,8 +1332,9 @@ export class ArtworkPaletteService {
         unique.set(identity, match);
       }
     }
-    const ranked = [...unique.values()]
-      .sort((left, right) => right.selectionScore - left.selectionScore);
+    const ranked = [...unique.values()].sort(
+      (left, right) => right.selectionScore - left.selectionScore,
+    );
     const best = ranked[0];
     if (!best) return null;
     const bestArtwork = artworkAssetKey(best.candidate.artworkUrl100);
@@ -1335,18 +1388,6 @@ export class ArtworkPaletteService {
         failures.push(failure);
         break;
       }
-      if (!this.consumeSearchSlot()) {
-        const failure: LookupFailure = {
-          reason: 'local-rate-limit',
-          retryable: true,
-          stage: plan.stage,
-        };
-        this.recordAttemptFailure(failure);
-        failures.push(failure);
-        break;
-      }
-      this.stageAttempts[plan.stage] += 1;
-      this.searchRequests += 1;
       const catalogStartedAt = performance.now();
       try {
         const summary = await this.search(
@@ -1368,6 +1409,7 @@ export class ArtworkPaletteService {
         const failure = catalogFailure(error, plan.stage);
         this.recordAttemptFailure(failure);
         failures.push(failure);
+        if (failure.reason === 'local-rate-limit') break;
       } finally {
         this.observeDuration('catalog', catalogStartedAt);
       }
@@ -1392,13 +1434,14 @@ export class ArtworkPaletteService {
     const rankedRejection = rejectionReasons
       .map((reason) => ({ reason, count: rejected[reason] }))
       .sort((left, right) => right.count - left.count)[0];
-    const failureReason: CachedArtworkFailureReason = rawResults === 0
-      ? 'catalog-empty'
-      : withArtwork === 0
-        ? 'catalog-missing-artwork'
-        : rankedRejection && rankedRejection.count > 0
-          ? rankedRejection.reason
-          : 'no-reliable-match';
+    const failureReason: CachedArtworkFailureReason =
+      rawResults === 0
+        ? 'catalog-empty'
+        : withArtwork === 0
+          ? 'catalog-missing-artwork'
+          : rankedRejection && rankedRejection.count > 0
+            ? rankedRejection.reason
+            : 'no-reliable-match';
     const failure: LookupFailure = {
       reason: failureReason,
       retryable: false,
@@ -1431,16 +1474,14 @@ export class ArtworkPaletteService {
         const response = await fetch(artworkUrl, {
           headers: { 'User-Agent': 'Awesome-Lyrla/0.1 (personal Tesla lyrics display)' },
           redirect: 'error',
-          signal: requestSignal(
-            signal,
-            Math.min(ARTWORK_REQUEST_TIMEOUT_MS, remaining),
-          ),
+          signal: requestSignal(signal, Math.min(ARTWORK_REQUEST_TIMEOUT_MS, remaining)),
         });
         if (!response.ok) {
           await response.body?.cancel();
           throw new Error(`artwork_http_${response.status}`);
         }
-        contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+        contentType =
+          response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
           await response.body?.cancel();
           throw new Error('unsupported_artwork_type');
@@ -1649,13 +1690,33 @@ export class ArtworkPaletteService {
     }
   }
 
-  private async search(
-    track: TrackMetadata,
+  private pruneSearchCache(): void {
+    for (const [key, entry] of this.searchCache) {
+      if (entry.expiresAt <= Date.now()) {
+        this.searchCache.delete(key);
+        this.searchCacheBytes -= entry.bytes;
+      }
+    }
+  }
+
+  private async searchPayload(
     plan: SearchPlan,
     timeoutMs: number,
     signal?: AbortSignal,
-  ): Promise<SearchSummary> {
+  ): Promise<z.infer<typeof appleSearchSchema>> {
     throwIfCanceled(signal);
+    // Cache provider responses, never a previous track's match decision. Every
+    // caller below rechecks album, recording version, duration and ambiguity.
+    const key = JSON.stringify([plan.storefront, plan.term]);
+    this.pruneSearchCache();
+    const cached = this.searchCache.get(key);
+    if (cached) {
+      this.searchCacheReuses += 1;
+      return cached.payload;
+    }
+    this.consumeSearchSlot();
+    this.stageAttempts[plan.stage] += 1;
+    this.searchRequests += 1;
     const url = new URL('https://itunes.apple.com/search');
     url.searchParams.set('term', plan.term);
     url.searchParams.set('country', plan.storefront);
@@ -1675,19 +1736,50 @@ export class ArtworkPaletteService {
     try {
       const raw = await readLimitedBody(response, SEARCH_BODY_LIMIT);
       payload = appleSearchSchema.parse(JSON.parse(raw.toString('utf8')));
+      throwIfCanceled(signal);
     } catch (error) {
-      if (isTimeout(error) || error instanceof TypeError || errorCode(error) === 'response_too_large') {
+      if (
+        isTimeout(error) ||
+        error instanceof TypeError ||
+        errorCode(error) === 'response_too_large'
+      ) {
         throw error;
       }
       throw new Error('catalog_invalid_response');
     }
+    const bytes = Buffer.byteLength(key) + Buffer.byteLength(JSON.stringify(payload));
+    while (
+      this.searchCache.size &&
+      (this.searchCache.size >= SEARCH_CACHE_MAX_ENTRIES ||
+        this.searchCacheBytes + bytes > SEARCH_CACHE_MAX_BYTES)
+    ) {
+      const oldest = this.searchCache.keys().next().value!;
+      this.searchCacheBytes -= this.searchCache.get(oldest)!.bytes;
+      this.searchCache.delete(oldest);
+    }
+    if (bytes <= SEARCH_CACHE_MAX_BYTES) {
+      this.searchCache.set(key, { payload, bytes, expiresAt: Date.now() + SEARCH_CACHE_MS });
+      this.searchCacheBytes += bytes;
+    }
+    return payload;
+  }
+
+  private async search(
+    track: TrackMetadata,
+    plan: SearchPlan,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<SearchSummary> {
+    const payload = await this.searchPayload(plan, timeoutMs, signal);
+    throwIfCanceled(signal);
     const rejected = countRecord<MatchRejectionReason>([
       'catalog-version-mismatch',
       'catalog-album-mismatch',
       'catalog-low-confidence',
     ]);
-    const withArtwork = payload.results
-      .filter((candidate): candidate is AppleCandidate => Boolean(candidate.artworkUrl100));
+    const withArtwork = payload.results.filter((candidate): candidate is AppleCandidate =>
+      Boolean(candidate.artworkUrl100),
+    );
     const matches = withArtwork
       .map((candidate) => {
         const base = trackMatchScore(track, {
@@ -1741,7 +1833,8 @@ export class ArtworkPaletteService {
     if (this.paletteStore?.read) return;
 
     const startedAt = performance.now();
-    void this.store.updateArtworkPalette(key, value, ARTWORK_CACHE_MAX_ENTRIES)
+    void this.store
+      .updateArtworkPalette(key, value, ARTWORK_CACHE_MAX_ENTRIES)
       .then(() => {
         this.localPersistSuccesses += 1;
       })

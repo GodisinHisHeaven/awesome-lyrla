@@ -3317,6 +3317,92 @@ describe('PlayerCoordinator lyric resolution', () => {
     expect(resolve).toHaveBeenCalledTimes(2);
   });
 
+  it('waits for local search quota recovery and records the successful retry', async () => {
+    const recordRetryOutcome = vi.fn();
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        palette: { primary: '#3B3E45', secondary: '#191C22', source: 'fallback' },
+        status: {
+          state: 'fallback',
+          reason: 'local-rate-limit',
+          retryable: true,
+          cache: 'miss',
+          retryAfterMs: 60_000,
+        },
+      })
+      .mockResolvedValue({
+        palette: { primary: '#224466', secondary: '#884422', source: 'apple' },
+        status: { state: 'success', source: 'catalog' },
+      });
+    const player = new PlayerCoordinator(
+      lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
+      { resolve, recordRetryOutcome } as unknown as ArtworkPaletteService,
+      testStore(),
+    );
+    player.ingest(VIN, 'MediaNowPlayingTitle', 'Midnight Circuit');
+    player.ingest(VIN, 'MediaNowPlayingArtist', 'Local Drive');
+    player.ingest(VIN, 'MediaNowPlayingAlbum', 'After Dark');
+    player.ingest(VIN, 'MediaNowPlayingDuration', 214_000);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(player.snapshot().artworkLookup).toMatchObject({ state: 'success' });
+    expect(recordRetryOutcome).toHaveBeenCalledExactlyOnceWith(1, {
+      state: 'success',
+      source: 'catalog',
+    });
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    player.dispose();
+  });
+
+  it.each(['track-change', 'dispose'] as const)(
+    'cancels quota recovery after %s',
+    async (action) => {
+      const resolve = vi.fn().mockResolvedValue({
+        palette: { primary: '#3B3E45', secondary: '#191C22', source: 'fallback' },
+        status: {
+          state: 'fallback',
+          reason: 'local-rate-limit',
+          retryable: true,
+          cache: 'miss',
+          retryAfterMs: 60_000,
+        },
+      });
+      const recordRetryOutcome = vi.fn();
+      const player = new PlayerCoordinator(
+        lyricsService(async () => ({ kind: 'missing', lines: [], provider: null })),
+        { resolve, recordRetryOutcome } as unknown as ArtworkPaletteService,
+        testStore(),
+      );
+      player.ingest(VIN, 'MediaNowPlayingTitle', 'Midnight Circuit');
+      player.ingest(VIN, 'MediaNowPlayingArtist', 'Local Drive');
+      player.ingest(VIN, 'MediaNowPlayingAlbum', 'After Dark');
+      player.ingest(VIN, 'MediaNowPlayingDuration', 214_000);
+      await vi.advanceTimersByTimeAsync(650);
+      expect(resolve).toHaveBeenCalledTimes(1);
+      if (action === 'dispose') player.dispose();
+      else {
+        resolve.mockResolvedValue({
+          palette: { primary: '#224466', secondary: '#884422', source: 'apple' },
+          status: { state: 'success', source: 'catalog' },
+        });
+        player.ingest(VIN, 'MediaNowPlayingTitle', 'New Song');
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(resolve).toHaveBeenCalledTimes(2);
+      }
+      const calls = resolve.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(resolve).toHaveBeenCalledTimes(calls);
+      expect(recordRetryOutcome).not.toHaveBeenCalled();
+      player.dispose();
+    },
+  );
+
   it('records fallback resolution once and defers delivery until a retry succeeds', async () => {
     const resolve = vi
       .fn()

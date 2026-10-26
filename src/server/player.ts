@@ -1626,6 +1626,7 @@ export class PlayerCoordinator {
       return;
     }
     const sequence = ++this.artworkLookupSequence;
+    const retryAttempt = this.artworkRetryAttempt;
     this.cancelActiveArtworkLookup();
     const abortController = new AbortController();
     this.artworkAbortController = abortController;
@@ -1653,6 +1654,7 @@ export class PlayerCoordinator {
           fingerprint !== this.pendingArtworkFingerprint
         )
           return;
+        if (retryAttempt > 0) this.artworkPaletteService.recordRetryOutcome?.(retryAttempt, status);
         if (status.state === 'fallback') {
           this.pendingArtworkFingerprint = '';
           this.finishArtworkMetadataEpoch();
@@ -1667,6 +1669,14 @@ export class PlayerCoordinator {
           fingerprint !== this.pendingArtworkFingerprint
         )
           return;
+        if (retryAttempt > 0) {
+          this.artworkPaletteService.recordRetryOutcome?.(retryAttempt, {
+            state: 'fallback',
+            reason: 'unknown',
+            retryable: true,
+            cache: 'miss',
+          });
+        }
         this.pendingArtworkFingerprint = '';
         this.finishArtworkMetadataEpoch();
         this.applyArtworkFallback(
@@ -1763,7 +1773,9 @@ export class PlayerCoordinator {
     this.artworkLookup = status;
     if (!retainPreviousPalette) this.artworkPalette = fallback;
 
-    const retryScheduled = status.retryable ? this.scheduleArtworkRetry(fingerprint) : false;
+    const retryScheduled = status.retryable
+      ? this.scheduleArtworkRetry(fingerprint, status)
+      : false;
     if (!status.retryable) this.clearArtworkRetry(true);
     this.activeArtworkFingerprint = retryScheduled ? '' : fingerprint;
     if (!retryScheduled) this.activeArtworkLookup = status;
@@ -1863,13 +1875,17 @@ export class PlayerCoordinator {
     this.artworkMissingTitleTimer = undefined;
   }
 
-  private scheduleArtworkRetry(fingerprint: string): boolean {
+  private scheduleArtworkRetry(fingerprint: string, status: ArtworkFallbackStatus): boolean {
     if (this.artworkRetryTimer) return true;
     if (this.artworkRetryAttempt >= ARTWORK_RETRY_DELAYS_MS.length) {
       this.artworkRetryFingerprint = '';
       return false;
     }
-    const delay = ARTWORK_RETRY_DELAYS_MS[this.artworkRetryAttempt];
+    const retryAfterMs =
+      status.reason === 'local-rate-limit' && Number.isFinite(status.retryAfterMs)
+        ? Math.max(0, Math.min(60_000, status.retryAfterMs!))
+        : 0;
+    const delay = Math.max(ARTWORK_RETRY_DELAYS_MS[this.artworkRetryAttempt], retryAfterMs);
     this.artworkRetryAttempt += 1;
     this.artworkRetryFingerprint = fingerprint;
     this.artworkRetryTimer = setTimeout(() => {

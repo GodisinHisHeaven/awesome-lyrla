@@ -27,7 +27,7 @@ const TEST_FIELD = {
   columns: 6 as const,
   rows: 4 as const,
   base: '#17202A',
-  colors: Array.from({ length: 24 }, (_, index) => index < 12 ? '#AA3344' : '#3344AA'),
+  colors: Array.from({ length: 24 }, (_, index) => (index < 12 ? '#AA3344' : '#3344AA')),
 };
 
 const TEST_PALETTE = {
@@ -44,10 +44,12 @@ function resolveWithOptions(
   track: typeof TRACK,
   options: ResolveOptions,
 ) {
-  return (service.resolve as unknown as (
-    value: typeof TRACK,
-    resolveOptions: ResolveOptions,
-  ) => ReturnType<ArtworkPaletteService['resolve']>)(track, options);
+  return (
+    service.resolve as unknown as (
+      value: typeof TRACK,
+      resolveOptions: ResolveOptions,
+    ) => ReturnType<ArtworkPaletteService['resolve']>
+  )(track, options);
 }
 
 async function nextTurn(): Promise<void> {
@@ -62,9 +64,11 @@ type DurationSummary = {
 };
 
 function durationStats(service: ArtworkPaletteService): Record<string, DurationSummary | null> {
-  return (service.lookupStats() as ReturnType<ArtworkPaletteService['lookupStats']> & {
-    durations: Record<string, DurationSummary | null>;
-  }).durations;
+  return (
+    service.lookupStats() as ReturnType<ArtworkPaletteService['lookupStats']> & {
+      durations: Record<string, DurationSummary | null>;
+    }
+  ).durations;
 }
 
 function testStore(): { store: JsonStore; state: PersistedState } {
@@ -88,7 +92,10 @@ function testStore(): { store: JsonStore; state: PersistedState } {
     store: {
       snapshot: () => structuredClone(state),
       readArtworkPalette: (key: string) => state.artworkPaletteCache[key],
-      updateArtworkPalette: async (key: string, value: PersistedState['artworkPaletteCache'][string] | undefined) => {
+      updateArtworkPalette: async (
+        key: string,
+        value: PersistedState['artworkPaletteCache'][string] | undefined,
+      ) => {
         if (value) state.artworkPaletteCache[key] = structuredClone(value);
         else delete state.artworkPaletteCache[key];
       },
@@ -110,7 +117,9 @@ async function splitColorArtwork(): Promise<Buffer> {
       pixels[offset + 2] = color[2];
     }
   }
-  return sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  return sharp(pixels, { raw: { width, height, channels: 3 } })
+    .png()
+    .toBuffer();
 }
 
 async function mostlyNeutralArtwork(): Promise<Buffer> {
@@ -127,7 +136,9 @@ async function mostlyNeutralArtwork(): Promise<Buffer> {
       pixels[offset + 2] = color[2];
     }
   }
-  return sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  return sharp(pixels, { raw: { width, height, channels: 3 } })
+    .png()
+    .toBuffer();
 }
 
 async function solidArtwork(value: number): Promise<Buffer> {
@@ -138,7 +149,9 @@ async function solidArtwork(value: number): Promise<Buffer> {
       channels: 3,
       background: { r: value, g: value, b: value },
     },
-  }).png().toBuffer();
+  })
+    .png()
+    .toBuffer();
 }
 
 async function transparentArtwork(): Promise<Buffer> {
@@ -154,7 +167,9 @@ async function transparentArtwork(): Promise<Buffer> {
       pixels[offset + 3] = x < width / 2 ? 0 : 255;
     }
   }
-  return sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  return sharp(pixels, { raw: { width, height, channels: 4 } })
+    .png()
+    .toBuffer();
 }
 
 function channelSpread(hex: string): number {
@@ -184,10 +199,197 @@ describe('ArtworkPaletteService', () => {
     vi.unstubAllGlobals();
   });
 
+  it('bounds retry diagnostics and returns independent counter snapshots', () => {
+    const service = new ArtworkPaletteService(testStore().store);
+    service.recordRetryOutcome(1, {
+      state: 'fallback',
+      reason: 'local-rate-limit',
+      retryable: true,
+      cache: 'miss',
+    });
+    service.recordRetryOutcome(1, { state: 'success', source: 'catalog' });
+    service.recordRetryOutcome(2, {
+      state: 'fallback',
+      reason: 'catalog-timeout',
+      retryable: true,
+      cache: 'miss',
+    });
+    service.recordRetryOutcome(3, { state: 'loading' });
+    service.recordRetryOutcome(4, { state: 'success', source: 'catalog' });
+    const counters = service.lookupStats().retryOutcomes;
+    expect(counters).toEqual({
+      'retry-1': { success: 1, fallback: 1, rateLimited: 1 },
+      'retry-2': { success: 0, fallback: 1, rateLimited: 0 },
+      'retry-3': { success: 0, fallback: 0, rateLimited: 0 },
+    });
+    counters['retry-1'].success = 99;
+    expect(service.lookupStats().retryOutcomes['retry-1'].success).toBe(1);
+  });
+
+  it('preserves the pre-optimization palette for a fixture covering every channel byte', async () => {
+    const pixels = Buffer.alloc(96 * 64 * 3);
+    for (let i = 0; i < pixels.length; i++) pixels[i] = i % 256;
+    const png = await sharp(pixels, { raw: { width: 96, height: 64, channels: 3 } })
+      .png()
+      .toBuffer();
+    // Captured from the formula implementation before introducing the byte LUT.
+    expect(await extractArtworkPalette(png)).toMatchObject({
+      primary: '#8B8B8B',
+      secondary: '#626262',
+      field: { id: 'field:7a6b7cb4255fe09e', base: '#474747' },
+    });
+  });
+
+  it('resumes a quota-limited search after reset without spending quota on completed stages', async () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const artwork = await splitColorArtwork();
+    const fetchMock = vi.fn(async (input: URL) => {
+      if (input.hostname !== 'itunes.apple.com') {
+        return new Response(Uint8Array.from(artwork), { headers: { 'Content-Type': 'image/png' } });
+      }
+      if (
+        input.searchParams.get('term')?.startsWith(TRACK.title) &&
+        input.searchParams.get('country') === 'CN'
+      ) {
+        return applePayload([
+          {
+            trackId: 12,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/recovered/100x100bb.jpg',
+          },
+        ]);
+      }
+      return applePayload([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { store } = testStore();
+    const service = new ArtworkPaletteService(store);
+    for (let index = 0; index < 4; index += 1) {
+      await service.resolve({ ...TRACK, title: `Missing ${index}` });
+    }
+    const limited = await service.resolve(TRACK);
+    expect(limited.status).toMatchObject({ reason: 'local-rate-limit', retryAfterMs: 60_000 });
+    expect(service.lookupStats().searchRequests).toBe(18);
+    now += 5_000;
+    expect((await service.resolve(TRACK)).status).toMatchObject({
+      reason: 'local-rate-limit',
+      retryAfterMs: 55_000,
+    });
+    expect(service.lookupStats().searchRequests).toBe(18);
+    now += 55_000;
+    expect((await service.resolve(TRACK)).status).toMatchObject({
+      state: 'success',
+      stage: 'fallback-core',
+    });
+    expect(service.lookupStats()).toMatchObject({
+      searchRequests: 19,
+      searchCache: { reuses: 4 },
+    });
+  });
+
+  it('revalidates cached candidates against corrected duration instead of reusing a rejection', async () => {
+    const artwork = await splitColorArtwork();
+    const fetchMock = vi.fn(async (input: URL) =>
+      input.hostname === 'itunes.apple.com'
+        ? applePayload([
+            {
+              trackId: 12,
+              trackName: TRACK.title,
+              artistName: TRACK.artist,
+              collectionName: TRACK.album,
+              trackTimeMillis: TRACK.durationMs,
+              artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/duration/100x100bb.jpg',
+            },
+          ])
+        : new Response(Uint8Array.from(artwork), { headers: { 'Content-Type': 'image/png' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const service = new ArtworkPaletteService(testStore().store);
+    // With no album the recording duration is a mandatory release check.
+    expect(
+      (await service.resolve({ ...TRACK, album: '', durationMs: 10_000 })).status,
+    ).toMatchObject({ reason: 'catalog-album-mismatch' });
+    expect((await service.resolve({ ...TRACK, album: '' })).status).toMatchObject({
+      state: 'success',
+    });
+    expect(service.lookupStats()).toMatchObject({ searchRequests: 3, searchCache: { reuses: 1 } });
+    // A third duration must be evaluated again, even after another caller succeeded.
+    expect(
+      (await service.resolve({ ...TRACK, album: '', durationMs: 20_000 })).status,
+    ).toMatchObject({ reason: 'catalog-album-mismatch' });
+    expect(service.lookupStats().searchRequests).toBe(3);
+  });
+
+  it.each([503, 429, 'invalid'] as const)(
+    'does not cache failed provider responses (%s)',
+    async (failure) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const fetchMock = vi.fn(async () =>
+        failure === 'invalid' ? new Response('{}') : new Response('', { status: failure }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const service = new ArtworkPaletteService(testStore().store);
+      await service.resolve(TRACK);
+      fetchMock.mockImplementation(async () => applePayload([]));
+      expect((await service.resolve(TRACK)).status).toMatchObject({ reason: 'catalog-empty' });
+      expect(service.lookupStats()).toMatchObject({
+        searchRequests: 8,
+        searchCache: { reuses: 0 },
+      });
+    },
+  );
+
+  it('expires provider responses independently of changing track fingerprints', async () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => applePayload([])),
+    );
+    const service = new ArtworkPaletteService(testStore().store);
+    await service.resolve(TRACK);
+    now += 119_999;
+    await service.resolve({ ...TRACK, durationMs: 100_000 });
+    expect(service.lookupStats()).toMatchObject({ searchRequests: 4, searchCache: { reuses: 4 } });
+    now += 1;
+    await service.resolve({ ...TRACK, durationMs: 120_000 });
+    expect(service.lookupStats().searchRequests).toBe(8);
+  });
+
+  it('evicts provider responses before exceeding the byte budget', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        applePayload([
+          {
+            trackId: 1,
+            trackName: 'x'.repeat(400_000),
+            artistName: 'y',
+          },
+        ]),
+      ),
+    );
+    const service = new ArtworkPaletteService(testStore().store);
+    await service.resolve(TRACK);
+    const cache = service.lookupStats().searchCache;
+    expect(cache.entries).toBe(2);
+    expect(cache.bytes).toBeGreaterThan(800_000);
+    expect(cache.bytes).toBeLessThanOrEqual(1_024 * 1_024);
+  });
+
   it('matches the correct Apple song, extracts two colors, and caches only the palette', async () => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
         return applePayload([
           {
@@ -234,10 +436,12 @@ describe('ArtworkPaletteService', () => {
     });
     expect(first.field?.colors).toHaveLength(24);
     expect(first.field?.colors.every((color) => /^#[0-9A-F]{6}$/.test(color))).toBe(true);
-    expect(Number.parseInt(first.field?.colors[0]?.slice(1, 3) ?? '0', 16))
-      .toBeGreaterThan(Number.parseInt(first.field?.colors[0]?.slice(5, 7) ?? '0', 16));
-    expect(Number.parseInt(first.field?.colors[5]?.slice(5, 7) ?? '0', 16))
-      .toBeGreaterThan(Number.parseInt(first.field?.colors[5]?.slice(1, 3) ?? '0', 16));
+    expect(Number.parseInt(first.field?.colors[0]?.slice(1, 3) ?? '0', 16)).toBeGreaterThan(
+      Number.parseInt(first.field?.colors[0]?.slice(5, 7) ?? '0', 16),
+    );
+    expect(Number.parseInt(first.field?.colors[5]?.slice(5, 7) ?? '0', 16)).toBeGreaterThan(
+      Number.parseInt(first.field?.colors[5]?.slice(1, 3) ?? '0', 16),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(state.artworkPaletteCache)).not.toContain('mzstatic');
   });
@@ -246,18 +450,21 @@ describe('ArtworkPaletteService', () => {
     const artwork = await splitColorArtwork();
     const catalogUrls: URL[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
         catalogUrls.push(url);
         if (url.searchParams.get('term')?.includes(TRACK.album)) return applePayload([]);
-        return applePayload([{
-          trackId: 21,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/core/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 21,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/core/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -290,19 +497,22 @@ describe('ArtworkPaletteService', () => {
     const artwork = await splitColorArtwork();
     const countries: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
         const country = url.searchParams.get('country') ?? '';
         countries.push(country);
         if (country !== 'CN') return applePayload([]);
-        return applePayload([{
-          trackId: 22,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/regional/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 22,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/regional/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -331,16 +541,19 @@ describe('ArtworkPaletteService', () => {
       expiresAt: Date.now() + 60_000,
     };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 23,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/refreshed/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 23,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/refreshed/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -424,27 +637,30 @@ describe('ArtworkPaletteService', () => {
       retryable: true,
       response: () => new Response('{', { status: 200 }),
     },
-  ])('classifies a catalog $label without negative-caching it', async ({ reason, retryable, response }) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    let catalogRequest = 0;
-    const fetchMock = vi.fn(async () => {
-      catalogRequest += 1;
-      if (catalogRequest === 1) return response();
-      return applePayload([]);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const { store, state } = testStore();
+  ])(
+    'classifies a catalog $label without negative-caching it',
+    async ({ reason, retryable, response }) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      let catalogRequest = 0;
+      const fetchMock = vi.fn(async () => {
+        catalogRequest += 1;
+        if (catalogRequest === 1) return response();
+        return applePayload([]);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { store, state } = testStore();
 
-    const result = await new ArtworkPaletteService(store).resolve(TRACK);
+      const result = await new ArtworkPaletteService(store).resolve(TRACK);
 
-    expect(result.status).toMatchObject({
-      state: 'fallback',
-      reason,
-      retryable,
-      cache: 'miss',
-    });
-    expect(state.artworkPaletteCache[artworkFingerprint(TRACK)]).toBeUndefined();
-  });
+      expect(result.status).toMatchObject({
+        state: 'fallback',
+        reason,
+        retryable,
+        cache: 'miss',
+      });
+      expect(state.artworkPaletteCache[artworkFingerprint(TRACK)]).toBeUndefined();
+    },
+  );
 
   it('counts each catalog request against the local limit and does not cache an incomplete lookup', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -513,7 +729,8 @@ describe('ArtworkPaletteService', () => {
     const releases = new Map<string, () => void>();
     const startedTerms: string[] = [];
     const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       const term = url.searchParams.get('term') ?? '';
       startedTerms.push(term);
       const stalledTrack = [tracks.first].find((track) => term.includes(track.title));
@@ -529,9 +746,14 @@ describe('ArtworkPaletteService', () => {
           work();
         };
         releases.set(stalledTrack.title, () => finish(() => resolve(applePayload([]))));
-        init?.signal?.addEventListener('abort', () => finish(() => {
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-        }), { once: true });
+        init?.signal?.addEventListener(
+          'abort',
+          () =>
+            finish(() => {
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+            }),
+          { once: true },
+        );
       });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -572,23 +794,30 @@ describe('ArtworkPaletteService', () => {
     const artwork = await splitColorArtwork();
     let catalogRequests = 0;
     const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname !== 'itunes.apple.com') {
-        return Promise.resolve(new Response(Uint8Array.from(artwork), {
-          status: 200,
-          headers: { 'Content-Type': 'image/png' },
-        }));
+        return Promise.resolve(
+          new Response(Uint8Array.from(artwork), {
+            status: 200,
+            headers: { 'Content-Type': 'image/png' },
+          }),
+        );
       }
       catalogRequests += 1;
       if (catalogRequests > 1) {
-        return Promise.resolve(applePayload([{
-          trackId: 176,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/restarted/100x100bb.jpg',
-        }]));
+        return Promise.resolve(
+          applePayload([
+            {
+              trackId: 176,
+              trackName: TRACK.title,
+              artistName: TRACK.artist,
+              collectionName: TRACK.album,
+              trackTimeMillis: TRACK.durationMs,
+              artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/restarted/100x100bb.jpg',
+            },
+          ]),
+        );
       }
       return new Promise<Response>((resolve, reject) => {
         const onAbort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
@@ -808,7 +1037,8 @@ describe('ArtworkPaletteService', () => {
       upsert: vi.fn(async (_input: PaletteWriteInput) => undefined),
     } satisfies PaletteStore;
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       expect(url.hostname).toBe('itunes.apple.com');
       return applePayload([]);
     });
@@ -853,16 +1083,19 @@ describe('ArtworkPaletteService', () => {
       upsert: vi.fn(async (_input: PaletteWriteInput) => undefined),
     } satisfies PaletteStore;
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 178,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/apple-winner/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 178,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/apple-winner/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -942,16 +1175,20 @@ describe('ArtworkPaletteService', () => {
   ])('continues to Apple when the Supabase read is a $label', async ({ read }) => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 78,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/supabase-fallback/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 78,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100:
+              'https://is1-ssl.mzstatic.com/image/thumb/supabase-fallback/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -978,16 +1215,19 @@ describe('ArtworkPaletteService', () => {
   it('returns a cold palette before a slow local compatibility-cache write completes', async () => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 79,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/slow-persist/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 79,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/slow-persist/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -997,14 +1237,15 @@ describe('ArtworkPaletteService', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { store, state } = testStore();
     let releaseWrite!: () => void;
-    const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve; });
-    const updateArtworkPalette = vi.fn(async (
-      key: string,
-      value: PersistedState['artworkPaletteCache'][string],
-    ) => {
-      await writeGate;
-      state.artworkPaletteCache[key] = structuredClone(value);
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
     });
+    const updateArtworkPalette = vi.fn(
+      async (key: string, value: PersistedState['artworkPaletteCache'][string]) => {
+        await writeGate;
+        state.artworkPaletteCache[key] = structuredClone(value);
+      },
+    );
     Object.assign(store, { updateArtworkPalette });
     const service = new ArtworkPaletteService(store, undefined);
     let settled = false;
@@ -1031,16 +1272,18 @@ describe('ArtworkPaletteService', () => {
       expect(durationStats(service).persist).toMatchObject({ count: 1 });
     });
     const durations = durationStats(service);
-    expect(Object.keys(durations)).toEqual(expect.arrayContaining([
-      'local',
-      'supabase',
-      'queue',
-      'catalog',
-      'download',
-      'analyze',
-      'persist',
-      'total',
-    ]));
+    expect(Object.keys(durations)).toEqual(
+      expect.arrayContaining([
+        'local',
+        'supabase',
+        'queue',
+        'catalog',
+        'download',
+        'analyze',
+        'persist',
+        'total',
+      ]),
+    );
     expect(durations.catalog).toMatchObject({ count: 1 });
     expect(durations.download).toMatchObject({ count: 1 });
     expect(durations.analyze).toMatchObject({ count: 1 });
@@ -1050,16 +1293,19 @@ describe('ArtworkPaletteService', () => {
   it('returns and caches the palette without waiting for asynchronous palette persistence', async () => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 77,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/studio/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 77,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/studio/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -1069,7 +1315,9 @@ describe('ArtworkPaletteService', () => {
     vi.stubGlobal('fetch', fetchMock);
     let releaseWrite!: () => void;
     let writeSettled = false;
-    const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
     const paletteStore = {
       upsert: vi.fn(async (_input: PaletteWriteInput) => {
         await writeGate;
@@ -1113,16 +1361,19 @@ describe('ArtworkPaletteService', () => {
   it('does not let an immediate local-cache hit overwrite queued Apple provenance', async () => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 177,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/provenance/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 177,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/provenance/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -1145,11 +1396,13 @@ describe('ArtworkPaletteService', () => {
 
     expect(paletteStore.upsert).toHaveBeenCalledTimes(1);
     expect(paletteStore.upsert.mock.calls.map(([input]) => input.providerName)).toEqual(['apple']);
-    expect(paletteStore.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      artworkKey: artworkFingerprint(TRACK),
-      providerName: 'apple',
-      providerTrackId: 177,
-    }));
+    expect(paletteStore.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artworkKey: artworkFingerprint(TRACK),
+        providerName: 'apple',
+        providerTrackId: 177,
+      }),
+    );
   });
 
   it('persists an existing current palette without downloading or retaining artwork', async () => {
@@ -1196,16 +1449,19 @@ describe('ArtworkPaletteService', () => {
       expiresAt: Date.now() + 60_000,
     };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 24,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/v4/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 24,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/v4/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -1258,23 +1514,26 @@ describe('ArtworkPaletteService', () => {
     const fetchMock = vi.fn(async () => applePayload([]));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(new ArtworkPaletteService(store).find(TRACK))
-      .resolves.toEqual(fallbackArtworkPalette(TRACK));
+    await expect(new ArtworkPaletteService(store).find(TRACK)).resolves.toEqual(
+      fallbackArtworkPalette(TRACK),
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('negative-caches a low-confidence catalog result and returns a deterministic fallback', async () => {
-    const fetchMock = vi.fn(async () => applePayload([
-      {
-        trackId: 3,
-        trackName: 'Completely Different Song',
-        artistName: 'Another Artist',
-        collectionName: 'Other Album',
-        trackTimeMillis: 90_000,
-        artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/other/100x100bb.jpg',
-      },
-    ]));
+    const fetchMock = vi.fn(async () =>
+      applePayload([
+        {
+          trackId: 3,
+          trackName: 'Completely Different Song',
+          artistName: 'Another Artist',
+          collectionName: 'Other Album',
+          trackTimeMillis: 90_000,
+          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/other/100x100bb.jpg',
+        },
+      ]),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const { store, state } = testStore();
     const service = new ArtworkPaletteService(store);
@@ -1354,16 +1613,18 @@ describe('ArtworkPaletteService', () => {
   });
 
   it('rejects the same song and artist when the album does not match', async () => {
-    const fetchMock = vi.fn(async () => applePayload([
-      {
-        trackId: 5,
-        trackName: TRACK.title,
-        artistName: TRACK.artist,
-        collectionName: 'Unrelated Compilation',
-        trackTimeMillis: TRACK.durationMs,
-        artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/wrong/100x100bb.jpg',
-      },
-    ]));
+    const fetchMock = vi.fn(async () =>
+      applePayload([
+        {
+          trackId: 5,
+          trackName: TRACK.title,
+          artistName: TRACK.artist,
+          collectionName: 'Unrelated Compilation',
+          trackTimeMillis: TRACK.durationMs,
+          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/wrong/100x100bb.jpg',
+        },
+      ]),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const { store } = testStore();
 
@@ -1375,24 +1636,26 @@ describe('ArtworkPaletteService', () => {
 
   it('falls back instead of choosing between equally strong candidates with different covers', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const fetchMock = vi.fn(async () => applePayload([
-      {
-        trackId: 31,
-        trackName: TRACK.title,
-        artistName: TRACK.artist,
-        collectionName: TRACK.album,
-        trackTimeMillis: TRACK.durationMs,
-        artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/edition-a/100x100bb.jpg',
-      },
-      {
-        trackId: 32,
-        trackName: TRACK.title,
-        artistName: TRACK.artist,
-        collectionName: TRACK.album,
-        trackTimeMillis: TRACK.durationMs,
-        artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/edition-b/100x100bb.jpg',
-      },
-    ]));
+    const fetchMock = vi.fn(async () =>
+      applePayload([
+        {
+          trackId: 31,
+          trackName: TRACK.title,
+          artistName: TRACK.artist,
+          collectionName: TRACK.album,
+          trackTimeMillis: TRACK.durationMs,
+          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/edition-a/100x100bb.jpg',
+        },
+        {
+          trackId: 32,
+          trackName: TRACK.title,
+          artistName: TRACK.artist,
+          collectionName: TRACK.album,
+          trackTimeMillis: TRACK.durationMs,
+          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/edition-b/100x100bb.jpg',
+        },
+      ]),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const { store, state } = testStore();
 
@@ -1447,7 +1710,8 @@ describe('ArtworkPaletteService', () => {
   it('treats different mzstatic hosts for the same asset path as one cover', async () => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
         return applePayload([
           {
@@ -1485,7 +1749,8 @@ describe('ArtworkPaletteService', () => {
   it('skips a higher-ranked wrong release and selects a reliable album match', async () => {
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
         return applePayload([
           {
@@ -1526,16 +1791,18 @@ describe('ArtworkPaletteService', () => {
 
   it('rejects artwork URLs outside the Apple image CDN', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const fetchMock = vi.fn(async () => applePayload([
-      {
-        trackId: 4,
-        trackName: TRACK.title,
-        artistName: TRACK.artist,
-        collectionName: TRACK.album,
-        trackTimeMillis: TRACK.durationMs,
-        artworkUrl100: 'https://example.com/image/cover.jpg',
-      },
-    ]));
+    const fetchMock = vi.fn(async () =>
+      applePayload([
+        {
+          trackId: 4,
+          trackName: TRACK.title,
+          artistName: TRACK.artist,
+          collectionName: TRACK.album,
+          trackTimeMillis: TRACK.durationMs,
+          artworkUrl100: 'https://example.com/image/cover.jpg',
+        },
+      ]),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const { store } = testStore();
 
@@ -1554,50 +1821,59 @@ describe('ArtworkPaletteService', () => {
     { status: 404, reason: 'artwork-http-client', retryable: false },
     { status: 429, reason: 'artwork-rate-limit', retryable: true },
     { status: 503, reason: 'artwork-http-server', retryable: true },
-  ])('classifies artwork HTTP $status without negative-caching it', async ({ status, reason, retryable }) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
-      if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 41,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/http/100x100bb.jpg',
-        }]);
-      }
-      return new Response('', { status });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const { store, state } = testStore();
+  ])(
+    'classifies artwork HTTP $status without negative-caching it',
+    async ({ status, reason, retryable }) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const fetchMock = vi.fn(async (input: string | URL | Request) => {
+        const url =
+          input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+        if (url.hostname === 'itunes.apple.com') {
+          return applePayload([
+            {
+              trackId: 41,
+              trackName: TRACK.title,
+              artistName: TRACK.artist,
+              collectionName: TRACK.album,
+              trackTimeMillis: TRACK.durationMs,
+              artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/http/100x100bb.jpg',
+            },
+          ]);
+        }
+        return new Response('', { status });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { store, state } = testStore();
 
-    const result = await new ArtworkPaletteService(store).resolve(TRACK);
+      const result = await new ArtworkPaletteService(store).resolve(TRACK);
 
-    expect(result.status).toMatchObject({
-      state: 'fallback',
-      reason,
-      retryable,
-      cache: 'miss',
-    });
-    expect(state.artworkPaletteCache[artworkFingerprint(TRACK)]).toBeUndefined();
-  });
+      expect(result.status).toMatchObject({
+        state: 'fallback',
+        reason,
+        retryable,
+        cache: 'miss',
+      });
+      expect(state.artworkPaletteCache[artworkFingerprint(TRACK)]).toBeUndefined();
+    },
+  );
 
   it('rejects an artwork whose decoded format disagrees with the HTTP MIME type', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const artwork = await splitColorArtwork();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       if (url.hostname === 'itunes.apple.com') {
-        return applePayload([{
-          trackId: 9,
-          trackName: TRACK.title,
-          artistName: TRACK.artist,
-          collectionName: TRACK.album,
-          trackTimeMillis: TRACK.durationMs,
-          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/studio/100x100bb.jpg',
-        }]);
+        return applePayload([
+          {
+            trackId: 9,
+            trackName: TRACK.title,
+            artistName: TRACK.artist,
+            collectionName: TRACK.album,
+            trackTimeMillis: TRACK.durationMs,
+            artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/studio/100x100bb.jpg',
+          },
+        ]);
       }
       return new Response(Uint8Array.from(artwork), {
         status: 200,
@@ -1626,7 +1902,9 @@ describe('ArtworkPaletteService', () => {
     expect(palette.secondary).toMatch(/^#[0-9A-F]{6}$/);
     expect(palette.primary).not.toBe(palette.secondary);
     expect(palette.field?.colors).toHaveLength(24);
-    expect((await extractArtworkPalette(await splitColorArtwork())).field?.id).toBe(palette.field?.id);
+    expect((await extractArtworkPalette(await splitColorArtwork())).field?.id).toBe(
+      palette.field?.id,
+    );
   });
 
   it('keeps a mostly monochrome cover neutral instead of amplifying a small blue tint', async () => {
@@ -1649,10 +1927,12 @@ describe('ArtworkPaletteService', () => {
     const left = palette.field?.colors[0] ?? '#000000';
     const right = palette.field?.colors[5] ?? '#000000';
 
-    expect(Number.parseInt(left.slice(1, 3), 16))
-      .toBeLessThanOrEqual(Number.parseInt(left.slice(5, 7), 16) + 4);
-    expect(Number.parseInt(right.slice(5, 7), 16))
-      .toBeGreaterThan(Number.parseInt(right.slice(1, 3), 16));
+    expect(Number.parseInt(left.slice(1, 3), 16)).toBeLessThanOrEqual(
+      Number.parseInt(left.slice(5, 7), 16) + 4,
+    );
+    expect(Number.parseInt(right.slice(5, 7), 16)).toBeGreaterThan(
+      Number.parseInt(right.slice(1, 3), 16),
+    );
   });
 
   it('uses album metadata, version tags, and the v5 organic-sampling algorithm in its cache identity', () => {
