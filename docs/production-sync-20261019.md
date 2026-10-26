@@ -47,3 +47,14 @@ Revert this target sync commit through the normal protected PR workflow. There a
 ## 中文摘要
 
 本轮仅同步已部署的封面限流恢复、短期搜索响应缓存和配色字节转换复用。保留歌词获取、自动滚动、自托管授权及独立 worker；排除注册、账号、Beta、租户系统与生产数据。搜索缓存不保存匹配结论，元数据变化后仍重新验证候选。数据库链路与共享 provider 生命周期留待独立同步。
+
+## Follow-up verification — 2026-10-26
+
+- Production observed at 15:57:06 UTC: status `ok`, revision `54b3c654b1fbcf0f15030b3cba47434e604ee939`, still equal to freshly fetched source `origin/main`. Target baseline remains `e2ead07c5adbec81eb8d552da6d62299351c4ceb`.
+- Reuse PR #20 and its existing branch; the original native CI run `39282270306` completed with all eight required checks passing. No reviews or unresolved conversations were present at recheck.
+- Current security audit now identifies high-severity Zod advisory GHSA-mrhx-c7xc-m3w5 in the previously locked 4.4.3. Raise the compatible version floor and lock to 4.6.6 as a target-only security prerequisite. No other dependency version changes. This dependency repair is not claimed as deployed source behavior.
+- The selected artwork behavior and all exclusions above remain unchanged. This follow-up changes only the dependency manifest, lockfile and this evidence record. No database, deployment or CI policy changes.
+- Updated local validation: locked `npm ci` and `npm run verify` PASS (993 tests / 56 files, static checks, architecture and both builds); E2E 10 PASS; property tests 5 PASS; unchanged critical mutation policies skipped by the existing gate. Current `security:check` PASS with 1 low and 1 moderate runtime finding remaining; full install audit reports 14 findings (2 low, 7 moderate, 3 high, 2 critical), including development dependencies. The earlier green CI run does not validate the dependency repair: all eight checks must pass on the updated head before merge. No exemptions or thresholds changed.
+- Rollback must retain Zod 4.6.6 or a later fixed compatible version; revert artwork behavior separately rather than restoring the vulnerable lockfile.
+
+中文：本次续用 PR #20，生产基线未变。重新审计发现旧锁文件中的 Zod 高危漏洞，仅将其升至 4.6.6；该安全修复属于开源目标仓库，不作为生产功能同步。更新后的提交必须重新通过全部门槛。
