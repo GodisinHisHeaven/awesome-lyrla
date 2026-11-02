@@ -266,10 +266,15 @@ export class AppleMusicCatalogService {
     const key =
       `${exhaustive ? 'exhaustive' : 'fast'}:${storefront}:` +
       `${enrichmentFingerprint(track)}:${track.durationMs}`;
+    // Include queue wait in each caller's budget, independently of shared work.
+    const deadline = AbortSignal.timeout(5_000);
+    const subscriberSignal = options.signal
+      ? AbortSignal.any([options.signal, deadline])
+      : deadline;
     const match = await this.inFlight.run(
       key,
       (signal) => this.search(track, storefront, exhaustive, signal),
-      options.signal,
+      subscriberSignal,
     );
     // Media source belongs to the subscriber, not the shared catalog result.
     return match ? { ...match, source: track.source } : null;

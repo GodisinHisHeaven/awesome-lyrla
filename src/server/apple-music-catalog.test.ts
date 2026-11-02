@@ -105,6 +105,41 @@ describe('AppleMusicCatalogService', () => {
     await Promise.all([second, third]);
   });
 
+  it('expires queued callers within five seconds without running their searches', async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('Expired', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    try {
+      const releases: Array<(value: Response) => void> = [];
+      const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => releases.push(resolve)));
+      const service = new AppleMusicCatalogService(settings({ fetchImpl }));
+      const first = service.resolve(TRACK).catch((error: unknown) => error);
+      const second = service
+        .resolve({ ...TRACK, durationMs: 215_000 })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const queued = service
+        .resolve({ ...TRACK, durationMs: 216_000 })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await first).toMatchObject({ name: 'TimeoutError' });
+      expect(await second).toMatchObject({ name: 'TimeoutError' });
+      expect(await queued).toMatchObject({ name: 'TimeoutError' });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      // Even an abort-insensitive transport must not start expired queued work.
+      releases.forEach((release) => release(searchResponse([song('late')])));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('creates a verifiable ES256 developer token with Apple claims', () => {
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();

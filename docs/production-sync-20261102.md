@@ -10,6 +10,8 @@ Selected: Apple catalog subscriber-aware request pooling from deployed source
 `79146e02d1e78f018b171e05edc2a50bd9984bcd`, including its standalone pool and tests.
 Limit each catalog service to two active searches. Coalesce by search mode,
 storefront, metadata and duration. Preserve each subscriber's media source.
+Target review adaptation: give every subscriber a five-second budget including queue wait,
+so expired queued work is removed. This preserves the previous caller time bound.
 Cancel underlying work only after the last subscriber leaves; retain the slot
 until the operation settles. Foreground and exhaustive worker queries remain distinct.
 
