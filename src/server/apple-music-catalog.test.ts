@@ -14,7 +14,9 @@ const TRACK: TrackMetadata = {
   source: 'Apple Music',
 };
 
-const settings = (overrides: Partial<AppleMusicCatalogSettings> = {}): AppleMusicCatalogSettings => ({
+const settings = (
+  overrides: Partial<AppleMusicCatalogSettings> = {},
+): AppleMusicCatalogSettings => ({
   developerToken: 'developer-token',
   teamId: '',
   keyId: '',
@@ -64,6 +66,80 @@ function song(
 describe('AppleMusicCatalogService', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('coalesces independently cancelable subscribers', async () => {
+    let release!: (value: Response) => void;
+    let requestSignal: AbortSignal | undefined;
+    const fetchImpl = vi.fn((_url: unknown, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    });
+    const service = new AppleMusicCatalogService(settings({ fetchImpl }));
+    const a = new AbortController();
+    const b = new AbortController();
+    const first = service.resolve(TRACK, { signal: a.signal });
+    const second = service.resolve({ ...TRACK, source: 'Spotify' }, { signal: b.signal });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+    a.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    expect(requestSignal!.aborted).toBe(false);
+    release(searchResponse([song('shared')]));
+    await expect(second).resolves.toMatchObject({ title: TRACK.title, source: 'Spotify' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('separates durations and bounds concurrent catalog requests', async () => {
+    const releases: Array<(value: Response) => void> = [];
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => releases.push(resolve)));
+    const service = new AppleMusicCatalogService(settings({ fetchImpl }));
+    const first = service.resolve(TRACK);
+    const second = service.resolve({ ...TRACK, durationMs: 215_000 });
+    const third = service.resolve({ ...TRACK, durationMs: 216_000 });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+    releases[0](searchResponse([song('first')]));
+    await first;
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+    releases[1](searchResponse([song('second')]));
+    releases[2](searchResponse([song('third')]));
+    await Promise.all([second, third]);
+  });
+
+  it('expires queued callers within five seconds without running their searches', async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('Expired', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    try {
+      const releases: Array<(value: Response) => void> = [];
+      const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => releases.push(resolve)));
+      const service = new AppleMusicCatalogService(settings({ fetchImpl }));
+      const first = service.resolve(TRACK).catch((error: unknown) => error);
+      const second = service
+        .resolve({ ...TRACK, durationMs: 215_000 })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const queued = service
+        .resolve({ ...TRACK, durationMs: 216_000 })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await first).toMatchObject({ name: 'TimeoutError' });
+      expect(await second).toMatchObject({ name: 'TimeoutError' });
+      expect(await queued).toMatchObject({ name: 'TimeoutError' });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      // Even an abort-insensitive transport must not start expired queued work.
+      releases.forEach((release) => release(searchResponse([song('late')])));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('creates a verifiable ES256 developer token with Apple claims', () => {
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
@@ -99,15 +175,19 @@ describe('AppleMusicCatalogService', () => {
       searchResponse([
         song('wrong-version', { name: 'Midnight Circuit (Live)' }),
         song('right', { durationInMillis: 214_120, hasLyrics: false }),
-      ]));
+      ]),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await new AppleMusicCatalogService(settings({ storefront: 'gb' })).resolve(TRACK);
+    const result = await new AppleMusicCatalogService(settings({ storefront: 'gb' })).resolve(
+      TRACK,
+    );
 
     expect(result).toEqual(TRACK);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [input, init] = fetchMock.mock.calls[0]!;
-    const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+    const url =
+      input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
     expect(url.pathname).toBe('/v1/catalog/gb/search');
     expect(url.searchParams.get('term')).toBe('Midnight Circuit Local Drive After Dark');
     expect(url.searchParams.get('types')).toBe('songs');
@@ -116,7 +196,10 @@ describe('AppleMusicCatalogService', () => {
   });
 
   it('fills a missing artist only with matching album and duration evidence', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => searchResponse([song('right')])));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => searchResponse([song('right')])),
+    );
 
     const result = await new AppleMusicCatalogService(settings()).resolve({ ...TRACK, artist: '' });
 
@@ -125,19 +208,16 @@ describe('AppleMusicCatalogService', () => {
   });
 
   it('lets the subscriber storefront override the configured search storefront', async () => {
-    const fetchMock = vi.fn(async (
-      _input: string | URL | Request,
-      _init?: RequestInit,
-    ) => searchResponse([song('right')]));
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      searchResponse([song('right')]),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
-    await new AppleMusicCatalogService(settings({ storefront: 'us' }))
-      .resolveMatch(TRACK, 'cn');
+    await new AppleMusicCatalogService(settings({ storefront: 'us' })).resolveMatch(TRACK, 'cn');
 
     const [input] = fetchMock.mock.calls[0]!;
-    const url = input instanceof URL
-      ? input
-      : new URL(typeof input === 'string' ? input : input.url);
+    const url =
+      input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
     expect(url.pathname).toBe('/v1/catalog/cn/search');
   });
 
@@ -150,9 +230,8 @@ describe('AppleMusicCatalogService', () => {
       source: '8',
     };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = input instanceof URL
-        ? input
-        : new URL(typeof input === 'string' ? input : input.url);
+      const url =
+        input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
       const term = url.searchParams.get('term');
       if (term === 'Here We Go (Live) Masiwei Dark Horse Season (Live)') {
         return searchResponse([
@@ -176,48 +255,55 @@ describe('AppleMusicCatalogService', () => {
       }
       throw new Error(`Unexpected search term: ${term}`);
     });
-    const service = new AppleMusicCatalogService(settings({
-      fetchImpl: fetchMock as typeof fetch,
-    }));
+    const service = new AppleMusicCatalogService(
+      settings({
+        fetchImpl: fetchMock as typeof fetch,
+      }),
+    );
 
-    await expect(service.resolveMatch(liveTrack, 'us', { exhaustive: true }))
-      .resolves.toMatchObject({
+    await expect(
+      service.resolveMatch(liveTrack, 'us', { exhaustive: true }),
+    ).resolves.toMatchObject({
       providerTrackId: '1791927318',
       title: liveTrack.title,
       artist: liveTrack.artist,
       album: liveTrack.album,
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.map(([input]) => requestUrl(input).pathname))
-      .toEqual(['/v1/catalog/us/search', '/v1/catalog/us/search']);
+    expect(fetchMock.mock.calls.map(([input]) => requestUrl(input).pathname)).toEqual([
+      '/v1/catalog/us/search',
+      '/v1/catalog/us/search',
+    ]);
   });
 
   it('keeps foreground metadata enrichment on the original one-request search', async () => {
-    const fetchMock = vi.fn(async (_input: string | URL | Request) =>
-      searchResponse([]));
-    const service = new AppleMusicCatalogService(settings({
-      fetchImpl: fetchMock as typeof fetch,
-    }));
+    const fetchMock = vi.fn(async (_input: string | URL | Request) => searchResponse([]));
+    const service = new AppleMusicCatalogService(
+      settings({
+        fetchImpl: fetchMock as typeof fetch,
+      }),
+    );
 
     await expect(service.resolve(TRACK)).resolves.toBeNull();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(requestUrl(fetchMock.mock.calls[0]![0]).searchParams.get('term'))
-      .toBe('Midnight Circuit Local Drive After Dark');
+    expect(requestUrl(fetchMock.mock.calls[0]![0]).searchParams.get('term')).toBe(
+      'Midnight Circuit Local Drive After Dark',
+    );
   });
 
   it('exposes the exact catalog identity only through resolveMatch', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => searchResponse([
-      song('1450330685', { isrc: 'USAAA2400001' }),
-    ])));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => searchResponse([song('1450330685', { isrc: 'USAAA2400001' })])),
+    );
 
-    await expect(new AppleMusicCatalogService(settings()).resolveMatch(TRACK))
-      .resolves.toEqual({
-        ...TRACK,
-        providerTrackId: '1450330685',
-        hasLyrics: true,
-        isrc: 'USAAA2400001',
-      });
+    await expect(new AppleMusicCatalogService(settings()).resolveMatch(TRACK)).resolves.toEqual({
+      ...TRACK,
+      providerTrackId: '1450330685',
+      hasLyrics: true,
+      isrc: 'USAAA2400001',
+    });
   });
 
   it('accepts deterministic Simplified and Traditional catalog metadata equivalence', async () => {
@@ -228,30 +314,39 @@ describe('AppleMusicCatalogService', () => {
       durationMs: 209_000,
       source: 'Apple Music',
     };
-    vi.stubGlobal('fetch', vi.fn(async () => searchResponse([
-      song('667921841', {
-        name: '單車',
-        artistName: '陳奕迅',
-        albumName: '2013 陳奕迅 Music Life 精選',
-        durationInMillis: 208_627,
-      }),
-    ])));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        searchResponse([
+          song('667921841', {
+            name: '單車',
+            artistName: '陳奕迅',
+            albumName: '2013 陳奕迅 Music Life 精選',
+            durationInMillis: 208_627,
+          }),
+        ]),
+      ),
+    );
 
-    await expect(new AppleMusicCatalogService(settings()).resolveMatch(simplified))
-      .resolves.toMatchObject({
-        providerTrackId: '667921841',
-        title: '單車',
-        artist: '陳奕迅',
-        album: '2013 陳奕迅 Music Life 精選',
-      });
+    await expect(
+      new AppleMusicCatalogService(settings()).resolveMatch(simplified),
+    ).resolves.toMatchObject({
+      providerTrackId: '667921841',
+      title: '單車',
+      artist: '陳奕迅',
+      album: '2013 陳奕迅 Music Life 精選',
+    });
   });
 
   it.each(['Live', 'Remix', 'Instrumental', 'Sped Up'])(
     'rejects a different %s recording version',
     async (version) => {
-      vi.stubGlobal('fetch', vi.fn(async () => searchResponse([
-        song('wrong-version', { name: `Midnight Circuit (${version})` }),
-      ])));
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          searchResponse([song('wrong-version', { name: `Midnight Circuit (${version})` })]),
+        ),
+      );
 
       await expect(new AppleMusicCatalogService(settings()).resolve(TRACK)).resolves.toBeNull();
     },
@@ -268,21 +363,21 @@ describe('AppleMusicCatalogService', () => {
   });
 
   it('forwards caller cancellation through catalog search', async () => {
-    const fetchMock = vi.fn((
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener(
-        'abort',
-        () => reject(init.signal?.reason),
-        { once: true },
-      );
-    }));
+    const fetchMock = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        }),
+    );
     const controller = new AbortController();
     const reason = new DOMException('worker deadline', 'TimeoutError');
-    const service = new AppleMusicCatalogService(settings({
-      fetchImpl: fetchMock as typeof fetch,
-    }));
+    const service = new AppleMusicCatalogService(
+      settings({
+        fetchImpl: fetchMock as typeof fetch,
+      }),
+    );
 
     const pending = service.resolveMatch(TRACK, 'us', { signal: controller.signal });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -302,15 +397,20 @@ describe('AppleMusicCatalogService', () => {
         return new Promise<void>(() => undefined);
       },
     });
-    const fetchMock = vi.fn(async () => new Response(body, {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }));
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
     const controller = new AbortController();
     const reason = new DOMException('worker deadline', 'TimeoutError');
-    const service = new AppleMusicCatalogService(settings({
-      fetchImpl: fetchMock as typeof fetch,
-    }));
+    const service = new AppleMusicCatalogService(
+      settings({
+        fetchImpl: fetchMock as typeof fetch,
+      }),
+    );
 
     const pending = service.resolveMatch(TRACK, 'us', { signal: controller.signal });
     await vi.waitFor(() => expect(body.locked).toBe(true));
@@ -322,29 +422,28 @@ describe('AppleMusicCatalogService', () => {
 
   it('aborts an exhaustive lookup while its second search plan is pending', async () => {
     let requestCount = 0;
-    const fetchMock = vi.fn((
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => {
-      requestCount += 1;
-      if (requestCount === 1) {
-        return Promise.resolve(searchResponse([
-          song('reliable-but-not-exact', { albumName: 'A Different Album' }),
-        ]));
-      }
-      return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener(
-          'abort',
-          () => reject(init.signal?.reason),
-          { once: true },
-        );
-      });
-    });
+    const fetchMock = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          return Promise.resolve(
+            searchResponse([song('reliable-but-not-exact', { albumName: 'A Different Album' })]),
+          );
+        }
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      },
+    );
     const controller = new AbortController();
     const reason = new DOMException('worker deadline', 'TimeoutError');
-    const service = new AppleMusicCatalogService(settings({
-      fetchImpl: fetchMock as typeof fetch,
-    }));
+    const service = new AppleMusicCatalogService(
+      settings({
+        fetchImpl: fetchMock as typeof fetch,
+      }),
+    );
 
     const pending = service.resolveMatch(TRACK, 'us', {
       signal: controller.signal,
@@ -370,9 +469,11 @@ describe('AppleMusicCatalogService', () => {
 
   it('does not share an in-flight request between fast and exhaustive modes', async () => {
     const fetchMock = vi.fn(async () => searchResponse([song('right')]));
-    const service = new AppleMusicCatalogService(settings({
-      fetchImpl: fetchMock as typeof fetch,
-    }));
+    const service = new AppleMusicCatalogService(
+      settings({
+        fetchImpl: fetchMock as typeof fetch,
+      }),
+    );
 
     await Promise.all([
       service.resolve(TRACK),

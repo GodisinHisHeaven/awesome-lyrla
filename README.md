@@ -120,6 +120,8 @@ SUPABASE_PALETTE_MODE=primary
 
 `SUPABASE_SECRET_KEY` must remain server-side. This project does not use Supabase Auth; its migrations contain only lyrics, Apple TTML, queue, and artwork-palette structures.
 
+Apple catalog searches share identical in-flight work and allow at most two active searches per service. Canceling one caller preserves other callers; foreground and exhaustive worker searches remain separate.
+
 ## Optional Apple Lyrics Enrichment
 
 Apple enrichment requires Supabase, Apple Music developer credentials, and a media user token. Personal, low-traffic deployments can retain the template's embedded runner, which is disabled by default:
