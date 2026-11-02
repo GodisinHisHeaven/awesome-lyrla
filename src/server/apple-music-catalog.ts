@@ -1,12 +1,9 @@
 import { createSign } from 'node:crypto';
+import { SharedTaskPool } from './shared-task-pool.js';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { TrackMetadata } from '../shared/contracts.js';
-import {
-  metadataVersionMismatch,
-  normalizeMetadata,
-  trackFingerprint,
-} from '../shared/track.js';
+import { metadataVersionMismatch, normalizeMetadata, trackFingerprint } from '../shared/track.js';
 import { config } from './config.js';
 import {
   scriptAwareMetadataSimilarity,
@@ -15,19 +12,25 @@ import {
 
 const appleMusicSearchSchema = z.object({
   results: z.object({
-    songs: z.object({
-      data: z.array(z.object({
-        id: z.string(),
-        attributes: z.object({
-          name: z.string(),
-          artistName: z.string(),
-          albumName: z.string().optional().default(''),
-          durationInMillis: z.number().nonnegative().optional().default(0),
-          hasLyrics: z.boolean().optional(),
-          isrc: z.string().optional(),
-        }),
-      })).max(25),
-    }).optional(),
+    songs: z
+      .object({
+        data: z
+          .array(
+            z.object({
+              id: z.string(),
+              attributes: z.object({
+                name: z.string(),
+                artistName: z.string(),
+                albumName: z.string().optional().default(''),
+                durationInMillis: z.number().nonnegative().optional().default(0),
+                hasLyrics: z.boolean().optional(),
+                isrc: z.string().optional(),
+              }),
+            }),
+          )
+          .max(25),
+      })
+      .optional(),
   }),
 });
 
@@ -104,12 +107,14 @@ function candidateReliable(track: TrackMetadata, candidate: TrackMetadata, score
   if (metadataVersionMismatch(track.title, candidate.title)) return false;
   const title = scriptAwareMetadataSimilarity(track.title, candidate.title);
   const artist = scriptAwareMetadataSimilarity(track.artist, candidate.artist);
-  const album = track.album && candidate.album
-    ? scriptAwareMetadataSimilarity(track.album, candidate.album)
-    : 0;
-  const durationDifference = track.durationMs > 0 && candidate.durationMs > 0
-    ? Math.abs(track.durationMs - candidate.durationMs) / 1_000
-    : Number.POSITIVE_INFINITY;
+  const album =
+    track.album && candidate.album
+      ? scriptAwareMetadataSimilarity(track.album, candidate.album)
+      : 0;
+  const durationDifference =
+    track.durationMs > 0 && candidate.durationMs > 0
+      ? Math.abs(track.durationMs - candidate.durationMs) / 1_000
+      : Number.POSITIVE_INFINITY;
 
   if (normalizeMetadata(track.artist)) {
     const hasSecondaryEvidence = durationDifference <= 10 || album >= 0.8;
@@ -118,10 +123,7 @@ function candidateReliable(track: TrackMetadata, candidate: TrackMetadata, score
   return score >= 0.84 && title >= 0.95 && durationDifference <= 8 && album >= 0.75;
 }
 
-async function readLimitedJson(
-  response: Response,
-  signal?: AbortSignal,
-): Promise<unknown> {
+async function readLimitedJson(response: Response, signal?: AbortSignal): Promise<unknown> {
   if (signal?.aborted) {
     cancelBody(response, abortReason(signal));
     throw abortReason(signal);
@@ -172,10 +174,7 @@ function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('Operation aborted', 'AbortError');
 }
 
-function cancelReader(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  reason: unknown,
-): void {
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>, reason: unknown): void {
   void reader.cancel(reason).catch(() => undefined);
 }
 
@@ -214,7 +213,7 @@ interface RankedCatalogCandidate {
 
 export class AppleMusicCatalogService {
   private generatedToken?: GeneratedDeveloperToken;
-  private readonly inFlight = new Map<string, Promise<AppleMusicCatalogMatch | null>>();
+  private readonly inFlight = new SharedTaskPool<AppleMusicCatalogMatch | null>(2);
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly settings: AppleMusicCatalogSettings = config.appleMusic) {
@@ -257,26 +256,23 @@ export class AppleMusicCatalogService {
     if (!this.isConfigured() || !normalizeMetadata(track.title)) return null;
     const requestedStorefront = storefrontOverride?.toLowerCase();
     const configuredStorefront = this.settings.storefront.toLowerCase();
-    const storefront = requestedStorefront && /^[a-z]{2}$/.test(requestedStorefront)
-      ? requestedStorefront
-      : /^[a-z]{2}$/.test(configuredStorefront)
-        ? configuredStorefront
-        : 'us';
+    const storefront =
+      requestedStorefront && /^[a-z]{2}$/.test(requestedStorefront)
+        ? requestedStorefront
+        : /^[a-z]{2}$/.test(configuredStorefront)
+          ? configuredStorefront
+          : 'us';
     const exhaustive = options.exhaustive ?? false;
-    const key = `${exhaustive ? 'exhaustive' : 'fast'}:${storefront}:`
-      + enrichmentFingerprint(track);
-    // A caller-owned cancellation signal cannot safely own a promise shared
-    // with unrelated callers. Signalled worker lookups therefore bypass the
-    // request-path deduplication map and remain independently cancellable.
-    if (options.signal) {
-      return this.search(track, storefront, exhaustive, options.signal);
-    }
-    const existing = this.inFlight.get(key);
-    if (existing) return existing;
-    const request = this.search(track, storefront, exhaustive)
-      .finally(() => this.inFlight.delete(key));
-    this.inFlight.set(key, request);
-    return request;
+    const key =
+      `${exhaustive ? 'exhaustive' : 'fast'}:${storefront}:` +
+      `${enrichmentFingerprint(track)}:${track.durationMs}`;
+    const match = await this.inFlight.run(
+      key,
+      (signal) => this.search(track, storefront, exhaustive, signal),
+      options.signal,
+    );
+    // Media source belongs to the subscriber, not the shared catalog result.
+    return match ? { ...match, source: track.source } : null;
   }
 
   private async developerToken(signal?: AbortSignal): Promise<string> {
@@ -307,20 +303,13 @@ export class AppleMusicCatalogService {
     signal?: AbortSignal,
   ): Promise<AppleMusicCatalogMatch | null> {
     const timeoutSignal = AbortSignal.timeout(5_000);
-    const requestSignal = signal
-      ? AbortSignal.any([signal, timeoutSignal])
-      : timeoutSignal;
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     requestSignal.throwIfAborted();
     const developerToken = await this.developerToken(requestSignal);
     const rankedById = new Map<string, RankedCatalogCandidate>();
     const terms = searchTerms(track);
     for (const term of exhaustive ? terms : terms.slice(0, 1)) {
-      const songs = await this.searchTerm(
-        storefront,
-        term,
-        developerToken,
-        requestSignal,
-      );
+      const songs = await this.searchTerm(storefront, term, developerToken, requestSignal);
       for (const song of songs) {
         const candidate = candidateTrack(song, track.source);
         const ranked = {
@@ -344,9 +333,11 @@ export class AppleMusicCatalogService {
       // non-exact candidates remain provisional until all bounded terms have
       // had a chance to contribute a better match.
       const exact = [...rankedById.values()]
-        .filter(({ candidate, score }) =>
-          enrichmentFingerprint(candidate) === enrichmentFingerprint(track)
-          && candidateReliable(track, candidate, score))
+        .filter(
+          ({ candidate, score }) =>
+            enrichmentFingerprint(candidate) === enrichmentFingerprint(track) &&
+            candidateReliable(track, candidate, score),
+        )
         .sort((left, right) => right.score - left.score)[0];
       if (exact) return this.catalogMatch(track, exact);
     }
@@ -383,16 +374,11 @@ export class AppleMusicCatalogService {
       cancelBody(response, new Error(`Apple Music catalog HTTP ${response.status}`));
       throw new Error(`apple_music_search_http_${response.status}`);
     }
-    const payload = appleMusicSearchSchema.parse(
-      await readLimitedJson(response, signal),
-    );
+    const payload = appleMusicSearchSchema.parse(await readLimitedJson(response, signal));
     return payload.results.songs?.data ?? [];
   }
 
-  private catalogMatch(
-    track: TrackMetadata,
-    best: RankedCatalogCandidate,
-  ): AppleMusicCatalogMatch {
+  private catalogMatch(track: TrackMetadata, best: RankedCatalogCandidate): AppleMusicCatalogMatch {
     return {
       providerTrackId: best.song.id,
       title: best.candidate.title,

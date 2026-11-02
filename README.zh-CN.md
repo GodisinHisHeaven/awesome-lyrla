@@ -125,6 +125,8 @@ SUPABASE_PALETTE_MODE=primary
 
 `SUPABASE_SECRET_KEY` 只能存在于服务端。这个项目不使用 Supabase Auth；migration 只包含歌词、Apple TTML、队列和配色结构。
 
+Apple catalog 会合并相同的进行中查询，每个服务最多同时执行两个查询。单个调用方取消不影响其他调用方；前台查询与后台穷尽查询保持独立。
+
 ## 可选 Apple 歌词补充
 
 Apple 补充需要 Supabase、Apple Music developer credentials 和 media user token。个人低流量部署可以保留模板中的 embedded runner；默认关闭：
